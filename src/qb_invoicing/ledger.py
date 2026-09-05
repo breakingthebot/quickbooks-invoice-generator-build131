@@ -109,11 +109,27 @@ class LedgerRepository:
                 )
             """)
 
+            # Webhook events table for idempotency
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS webhook_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_id TEXT UNIQUE NOT NULL,
+                    realm_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    entity_name TEXT NOT NULL,
+                    entity_id TEXT NOT NULL,
+                    operation TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    processed_at TEXT NOT NULL
+                )
+            """)
+
             # Indexes for high performance
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices (payment_status)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_invoices_doc_number ON invoices (doc_number)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_invoices_order_id ON invoices (order_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_payments_invoice ON payments (qbo_invoice_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_webhook_events_id ON webhook_events (event_id)")
             conn.commit()
 
     def save_order(self, order: OrderData) -> None:
@@ -365,6 +381,74 @@ class LedgerRepository:
                 pending_invoices_count=row["pending_count"] or 0,
                 overdue_invoices_count=row["overdue_count"] or 0,
             )
+
+    def is_webhook_event_processed(self, event_id: str) -> bool:
+        """Check whether a webhook event has already been processed."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT id FROM webhook_events WHERE event_id = ?",
+                (event_id,),
+            ).fetchone()
+            return row is not None
+
+    def record_webhook_event(
+        self,
+        event_id: str,
+        realm_id: str,
+        event_type: str,
+        entity_name: str,
+        entity_id: str,
+        operation: str,
+        payload: str,
+    ) -> bool:
+        """Store a webhook event to guarantee at-most-once processing."""
+        with self._get_connection() as conn:
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO webhook_events (
+                        event_id, realm_id, event_type, entity_name, entity_id, operation, payload, processed_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event_id,
+                        realm_id,
+                        event_type,
+                        entity_name,
+                        entity_id,
+                        operation,
+                        payload,
+                        datetime.now(timezone.utc).isoformat(),
+                    ),
+                )
+                conn.commit()
+                return True
+            except sqlite3.IntegrityError:
+                return False
+
+    def void_invoice(self, qbo_invoice_id: str) -> bool:
+        """Mark an invoice as VOIDED in the ledger."""
+        with self._get_connection() as conn:
+            now_iso = datetime.now(timezone.utc).isoformat()
+            cursor = conn.execute(
+                """
+                UPDATE invoices
+                SET payment_status = ?, balance_due = 0.0, updated_at = ?
+                WHERE qbo_invoice_id = ?
+                """,
+                (PaymentStatus.VOIDED.value, now_iso, str(qbo_invoice_id)),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def get_recent_webhook_events(self, limit: int = 25) -> List[Dict[str, Any]]:
+        """Retrieve latest webhook events received."""
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM webhook_events ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [dict(r) for r in rows]
 
     def _row_to_invoice(self, r: sqlite3.Row) -> InvoiceRecord:
         return InvoiceRecord(

@@ -21,6 +21,7 @@ class Settings(BaseModel):
     client_secret: str = Field(default="mock_client_secret")
     access_token: str = Field(default="mock_access_token")
     refresh_token: str = Field(default="mock_refresh_token")
+    webhook_verifier_token: str = Field(default="mock_webhook_verifier_token_xyz123")
 
     # API Endpoints
     sandbox_base_url: str = "https://sandbox-quickbooks.api.intuit.com"
@@ -68,6 +69,7 @@ class Settings(BaseModel):
         client_secret = os.getenv("QBO_CLIENT_SECRET", "mock_client_secret")
         access_token = os.getenv("QBO_ACCESS_TOKEN", "mock_access_token")
         refresh_token = os.getenv("QBO_REFRESH_TOKEN", "mock_refresh_token")
+        verifier_token = os.getenv("QBO_WEBHOOK_VERIFIER_TOKEN", "mock_webhook_verifier_token_xyz123")
 
         db_path = os.getenv("DATABASE_PATH", "storage/qbo_invoicing.db")
         exports_dir = os.getenv("EXPORTS_DIR", "storage/exports")
@@ -82,6 +84,7 @@ class Settings(BaseModel):
             client_secret=client_secret,
             access_token=access_token,
             refresh_token=refresh_token,
+            webhook_verifier_token=verifier_token,
             database_path=db_path,
             exports_dir=exports_dir,
             default_payment_terms_days=terms_days,

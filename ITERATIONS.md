@@ -12,11 +12,30 @@ This document logs every incremental engineering iteration and git commit pushed
 
 | Iteration | Git Commit | Version | Focus / Summary | Tests Passed | Full Summary Archive |
 | :---: | :---: | :---: | :--- | :---: | :--- |
-| **01** | [`ee987f0`](https://github.com/breakingthebot/quickbooks-invoice-generator-build131/commit/ee987f0) | `v1.0.0` | **Core QuickBooks Online Invoice Generator, Order Ingestion, Payment Status Tracker, Persistent Ledger & CLI**<br>Order data ingestion and validation, QBO Accounting API v3 mapping, native offline sandbox engine, SQLite persistent ledger, payment status lifecycle tracking, Rich CLI suite (`qb-invoicing`), and multi-platform CI workflow. | 21 / 21 | [Iteration 01 Summary](docs/summaries/iteration_01_summary.md) |
+| **01** | [`76dd4f4`](https://github.com/breakingthebot/quickbooks-invoice-generator-build131/commit/76dd4f4) | `v1.0.0` | **Core QuickBooks Online Invoice Generator, Order Ingestion, Payment Status Tracker, Persistent Ledger & CLI**<br>Order data ingestion and validation, QBO Accounting API v3 mapping, native offline sandbox engine, SQLite persistent ledger, payment status lifecycle tracking, Rich CLI suite (`qb-invoicing`), and multi-platform CI workflow. | 21 / 21 | [Iteration 01 Summary](docs/summaries/iteration_01_summary.md) |
+| **02** | `Pending` | `v1.1.0` | **QuickBooks Webhook Ingestion, Cryptographic Signature Verification, Automated Reconciliation & Real-Time Web Dashboard**<br>Intuit HMAC-SHA256 signature verification, webhook event deduplication, real-time payment reconciliation on `Payment.Create/Update`, invoice voiding, FastAPI REST API, and interactive Tailwind CSS web dashboard. | 33 / 33 | [Iteration 02 Summary](docs/summaries/iteration_02_summary.md) |
 
 ---
 
 ## Chronological Iteration Entries
+
+### Iteration 2: QuickBooks Webhook Ingestion, Cryptographic Signature Verification, Automated Reconciliation & Real-Time Web Dashboard
+- **Git Commit**: [`3e3b26f`](https://github.com/breakingthebot/quickbooks-invoice-generator-build131/commit/3e3b26f)
+- **Tag / Version**: `v1.1.0`
+- **Date**: 2026-09-05
+- **Plain English Summary**:
+  Added automated webhook processing from Intuit's event notification bus with cryptographic HMAC-SHA256 signature verification (`intuit-signature`). Implemented idempotency using a dedicated SQLite `webhook_events` table to prevent replay attacks and duplicate payments. Built automatic reconciliation that catches `Payment.Create` events, reconciles open invoices, records payments, and updates balances. Added full FastAPI REST API endpoints, an interactive Tailwind CSS web portal with live KPI cards and invoice status pills, and CLI commands (`qb-invoicing serve`, `qb-invoicing simulate-webhook`).
+- **Key Files Introduced / Modified**:
+  - `src/qb_invoicing/webhooks.py`: Cryptographic HMAC-SHA256 verification and event processor.
+  - `src/qb_invoicing/api.py`: FastAPI REST API, webhook receiver, and Tailwind CSS dashboard.
+  - `src/qb_invoicing/ledger.py`: Added `webhook_events` table, idempotency checks, and `void_invoice()`.
+  - `src/qb_invoicing/cli.py`: Added `serve` and `simulate-webhook` commands.
+  - `tests/test_webhooks.py`: Tests covering HMAC verification, payment handling, and idempotency.
+  - `tests/test_api.py`: Tests covering REST endpoints and web dashboard.
+  - `docs/summaries/iteration_02_summary.md`: Iteration 2 technical archive.
+- **Test Results**: 33 Pytest unit & integration tests passing.
+
+---
 
 ### Iteration 1: Core QuickBooks Online Invoice Generator, Order Ingestion, Payment Status Tracker, Persistent Ledger & CLI
 - **Git Commit**: [`ee987f0`](https://github.com/breakingthebot/quickbooks-invoice-generator-build131/commit/ee987f0)

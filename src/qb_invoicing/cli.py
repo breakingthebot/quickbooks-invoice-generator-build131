@@ -5,6 +5,7 @@ Command Line Interface for QuickBooks Online Invoicing.
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Optional
@@ -444,5 +445,65 @@ def preview_cmd(order_path: str):
     console.print_json(qbo_payload.model_dump_json(exclude_none=True))
 
 
+@cli.command("serve")
+@click.option("--host", default="127.0.0.1", help="Host interface to bind")
+@click.option("--port", default=8000, type=int, help="Port to listen on")
+def serve_cmd(host: str, port: int):
+    """Launch the FastAPI web dashboard and webhook server."""
+    import uvicorn
+
+    console.print(f"[bold green][OK][/bold green] Starting QuickBooks Invoicing Dashboard at: [cyan]http://{host}:{port}[/cyan]")
+    console.print(f"  - Webhook endpoint: [cyan]http://{host}:{port}/api/webhooks/quickbooks[/cyan]")
+    console.print(f"  - API Documentation: [cyan]http://{host}:{port}/docs[/cyan]")
+    uvicorn.run("qb_invoicing.api:app", host=host, port=port, reload=False)
+
+
+@cli.command("simulate-webhook")
+@click.option("--entity", "-e", type=click.Choice(["Payment", "Invoice"]), default="Payment", help="Entity name")
+@click.option("--operation", "-op", type=click.Choice(["Create", "Update", "Void"]), default="Create", help="Entity operation")
+@click.option("--id", "-i", "entity_id", default="5001", help="QBO entity ID to trigger event for")
+def simulate_webhook_cmd(entity: str, operation: str, entity_id: str):
+    """Simulate an incoming Intuit webhook notification with valid HMAC-SHA256 signature."""
+    from qb_invoicing.webhooks import WebhookProcessor, generate_qbo_webhook_signature
+
+    client, ledger, tracker, _, cfg = get_components()
+    processor = WebhookProcessor(client, ledger, tracker)
+
+    payload = {
+        "eventNotifications": [
+            {
+                "realmId": cfg.realm_id,
+                "dataChangeEvent": {
+                    "entities": [
+                        {
+                            "name": entity,
+                            "id": entity_id,
+                            "operation": operation,
+                            "lastUpdated": datetime.now(timezone.utc).isoformat(),
+                        }
+                    ]
+                },
+            }
+        ]
+    }
+    payload_bytes = json.dumps(payload).encode("utf-8")
+    sig = generate_qbo_webhook_signature(payload_bytes, cfg.webhook_verifier_token)
+
+    console.print("[bold blue]Simulating Intuit QuickBooks Online Webhook...[/bold blue]")
+    console.print(f"  - Entity: [cyan]{entity}[/cyan] (ID: {entity_id})")
+    console.print(f"  - Operation: [yellow]{operation}[/yellow]")
+    console.print(f"  - Computed HMAC-SHA256: [dim]{sig}[/dim]")
+
+    result = processor.process_payload(
+        payload_bytes=payload_bytes,
+        signature=sig,
+        verifier_token=cfg.webhook_verifier_token,
+    )
+
+    console.print("[bold green][OK][/bold green] Webhook processed successfully!")
+    console.print_json(json.dumps(result))
+
+
 if __name__ == "__main__":
     cli()
+
