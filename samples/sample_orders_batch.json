@@ -1,0 +1,56 @@
+[
+  {
+    "order_id": "BATCH-001",
+    "customer": {
+      "name": "Beacon Media Labs",
+      "email": "invoices@beaconmedialabs.com",
+      "company_name": "Beacon Media Labs Inc"
+    },
+    "items": [
+      {
+        "name": "Annual Enterprise Media License",
+        "quantity": 1,
+        "unit_price": 2400.00,
+        "tax_code": "NON"
+      }
+    ],
+    "order_date": "2026-09-02"
+  },
+  {
+    "order_id": "BATCH-002",
+    "customer": {
+      "name": "David Sterling",
+      "email": "david.sterling@sterlinglegal.com",
+      "company_name": "Sterling Legal LLP"
+    },
+    "items": [
+      {
+        "name": "Legal Document Automation Suite",
+        "quantity": 5,
+        "unit_price": 180.00,
+        "tax_code": "TAX"
+      }
+    ],
+    "shipping_fee": 15.00,
+    "tax_rate_percent": 6.50,
+    "order_date": "2026-09-03"
+  },
+  {
+    "order_id": "BATCH-003",
+    "customer": {
+      "name": "Quantum Robotics Co",
+      "email": "ap@quantumrobotics.io"
+    },
+    "items": [
+      {
+        "name": "LiDAR Sensor Module v4",
+        "quantity": 4,
+        "unit_price": 450.00,
+        "tax_code": "TAX"
+      }
+    ],
+    "discount_total": 100.00,
+    "tax_rate_percent": 7.25,
+    "order_date": "2026-09-04"
+  }
+]

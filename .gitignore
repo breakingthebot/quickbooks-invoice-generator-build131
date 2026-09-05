@@ -1,0 +1,41 @@
+# Environment variables
+.env
+.env.local
+*.env
+
+# Python virtual environment & caches
+venv/
+env/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.pytest_temp/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# Node / JS
+node_modules/
+
+# OS and logs
+.DS_Store
+Thumbs.db
+*.log
+
+# Sensitive instructions & local build notes
+AGENTS.md
+BUILD_NOTES.md
+
+# Local runtime storage & database files
+storage/*.db
+storage/*.sqlite
+storage/*.sqlite3
+storage/*.json
+storage/.*_state.json
+storage/invoices_export/
+storage/exports/

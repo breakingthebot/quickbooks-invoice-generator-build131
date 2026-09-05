@@ -1,0 +1,43 @@
+{
+  "order_id": "SRV-4410",
+  "order_number": "INV-2026-002",
+  "customer": {
+    "name": "Apex Global Ventures",
+    "email": "finance@apexventures.io",
+    "company_name": "Apex Global Ventures LLC",
+    "billing_address": {
+      "line1": "100 Montgomery St",
+      "line2": "Suite 1500",
+      "city": "San Francisco",
+      "state": "CA",
+      "postal_code": "94104",
+      "country": "USA"
+    }
+  },
+  "items": [
+    {
+      "item_id": "SRV-ARCH-CONSULT",
+      "name": "Cloud Infrastructure Architecture Consulting",
+      "description": "Kubernetes migration and multi-cloud reliability sprint (40 hrs)",
+      "quantity": 40,
+      "unit_price": 225.00,
+      "tax_code": "NON"
+    },
+    {
+      "item_id": "SRV-AUDIT-SEC",
+      "name": "Zero-Trust Security Audit & Assessment",
+      "description": "SOC2 security boundary audit and gap report",
+      "quantity": 1,
+      "unit_price": 3500.00,
+      "tax_code": "NON"
+    }
+  ],
+  "shipping_fee": 0.00,
+  "discount_total": 500.00,
+  "tax_rate_percent": 0.00,
+  "currency": "USD",
+  "order_date": "2026-08-15",
+  "due_date": "2026-08-30",
+  "customer_memo": "Consulting engagement Milestone 2 completion.",
+  "private_note": "Signed SOW #2026-CA-09"
+}

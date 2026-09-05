@@ -1,0 +1,49 @@
+{
+  "order_id": "EC-8921",
+  "order_number": "INV-2026-001",
+  "customer": {
+    "name": "Sarah Jenkins",
+    "email": "sarah.jenkins@example.com",
+    "phone": "+1-415-555-0192",
+    "company_name": "Jenkins Design Studio",
+    "billing_address": {
+      "line1": "742 Evergreen Terrace",
+      "city": "Springfield",
+      "state": "OR",
+      "postal_code": "97477",
+      "country": "USA"
+    },
+    "shipping_address": {
+      "line1": "742 Evergreen Terrace",
+      "city": "Springfield",
+      "state": "OR",
+      "postal_code": "97477",
+      "country": "USA"
+    }
+  },
+  "items": [
+    {
+      "item_id": "SKU-DESK-01",
+      "name": "Ergonomic Standing Desk",
+      "description": "Electric dual-motor adjustable standing desk (Oak top, black frame)",
+      "quantity": 1,
+      "unit_price": 549.99,
+      "tax_code": "TAX"
+    },
+    {
+      "item_id": "SKU-MAT-04",
+      "name": "Anti-Fatigue Standing Mat",
+      "description": "Ergonomic high-density foam standing floor mat",
+      "quantity": 2,
+      "unit_price": 39.50,
+      "tax_code": "TAX"
+    }
+  ],
+  "shipping_fee": 25.00,
+  "discount_total": 50.00,
+  "tax_rate_percent": 8.50,
+  "currency": "USD",
+  "order_date": "2026-09-01",
+  "customer_memo": "Thank you for your business! Please remit payment within 30 days.",
+  "private_note": "Fulfillment via West Coast Distribution Hub"
+}

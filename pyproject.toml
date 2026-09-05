@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qb-invoicing"
+version = "1.0.0"
+description = "QuickBooks Online Invoice Generator & Payment Status Tracker — automated order ingestion, QBO Accounting API v3 mapping, real-time payment reconciliation, SQLite ledger, and CLI suite."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "breakingthebot", email = "breakingthebot@gmail.com" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.7.0",
+    "click>=8.1.7",
+    "rich>=13.7.1",
+    "httpx>=0.27.0",
+    "jinja2>=3.1.4",
+    "python-dateutil>=2.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2.0",
+    "pytest-mock>=3.14.0",
+]
+
+[project.scripts]
+qb-invoicing = "qb_invoicing.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short --basetemp=.pytest_temp"
