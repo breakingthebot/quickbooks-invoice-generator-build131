@@ -136,3 +136,39 @@ def test_api_web_dashboard(api_client):
     assert res.status_code == 200
     assert "QuickBooks Online Invoicing Platform" in res.text
     assert "INV-API-TEST" in res.text
+    assert "Accounts Receivable Aging Schedule" in res.text
+
+
+def test_api_dunning_aging_report(api_client):
+    res = api_client.get("/api/dunning/aging-report?as_of_date=2026-09-01")
+    assert res.status_code == 200
+    data = res.json()
+    assert "current_amount" in data
+    assert "total_receivables" in data
+    assert float(data["total_receivables"]) >= 400.0
+
+
+def test_api_dunning_run(api_client):
+    res = api_client.post(
+        "/api/dunning/run",
+        json={"dry_run": True, "force": True, "as_of_date": "2026-10-15"},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert "evaluated_count" in data
+    assert "notices" in data
+
+
+def test_api_dunning_history(api_client):
+    res = api_client.get("/api/dunning/history")
+    assert res.status_code == 200
+    data = res.json()
+    assert isinstance(data, list)
+
+
+def test_api_dunning_evaluate_invoice(api_client):
+    res = api_client.post("/api/dunning/evaluate/INV-API-TEST?force=true&as_of_date=2026-10-15")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] in ("ELIGIBLE", "SKIPPED")
+

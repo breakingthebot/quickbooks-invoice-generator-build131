@@ -94,3 +94,35 @@ def test_cli_batch_generate(tmp_path, monkeypatch):
     assert "BATCH-002" in res_batch.output
     assert "BATCH-003" in res_batch.output
     assert "Successfully generated 3/3 invoices" in res_batch.output
+
+
+def test_cli_aging_and_dunning_commands(tmp_path, monkeypatch):
+    test_db = tmp_path / "cli_dunning.db"
+    monkeypatch.setenv("DATABASE_PATH", str(test_db))
+
+    runner = CliRunner()
+    runner.invoke(cli, ["init-db"])
+    runner.invoke(cli, ["generate", "--order", "samples/sample_order_ecommerce.json"])
+
+    # Aging report
+    res_aging = runner.invoke(cli, ["aging-report", "--as-of", "2026-10-15"])
+    assert res_aging.exit_code == 0
+    assert "Accounts Receivable Aging Schedule" in res_aging.output
+    assert "Current" in res_aging.output
+
+    # Dunning dry run
+    res_dry = runner.invoke(cli, ["dunning-run", "--dry-run", "--force", "--as-of", "2026-10-15"])
+    assert res_dry.exit_code == 0
+    assert "Executing Automated Dunning" in res_dry.output
+    assert "SIMULATION" in res_dry.output
+
+    # Dunning live run
+    res_live = runner.invoke(cli, ["dunning-run", "--force", "--as-of", "2026-10-15"])
+    assert res_live.exit_code == 0
+    assert "Notices Dispatched:" in res_live.output
+
+    # Dunning history
+    res_hist = runner.invoke(cli, ["dunning-history"])
+    assert res_hist.exit_code == 0
+    assert "Dunning Notice Audit Log" in res_hist.output
+

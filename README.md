@@ -6,7 +6,7 @@
 [![Intuit QBO v3](https://img.shields.io/badge/QuickBooks-Accounting%20API%20v3-green.svg)](https://developer.intuit.com/)
 [![Code Style: Black](https://img.shields.io/badge/Code%20Style-Black-000000.svg)](https://github.com/psf/black)
 
-A production-ready QuickBooks Online (QBO) invoice generator, webhook ingestion engine, and real-time payment reconciliation platform. Transforms multi-channel e-commerce, ERP, or consultation order data into Intuit QuickBooks Online Accounting API v3 invoices, manages customer synchronization, receives and cryptographically verifies QuickBooks Online webhooks via HMAC-SHA256 (`intuit-signature`), maintains a local SQLite ledger with relational constraints, tracks payment lifecycles (`PENDING` -> `PARTIAL` -> `PAID`, `OVERDUE`), and provides both an interactive terminal CLI suite (`qb-invoicing`) and a modern FastAPI REST API with a responsive web dashboard.
+A production-ready QuickBooks Online (QBO) invoice generator, webhook ingestion engine, automated dunning escalation system, and real-time payment reconciliation platform. Transforms multi-channel e-commerce, ERP, or consultation order data into Intuit QuickBooks Online Accounting API v3 invoices, manages customer synchronization, receives and cryptographically verifies QuickBooks Online webhooks via HMAC-SHA256 (`intuit-signature`), categorizes outstanding receivables into aging schedule buckets, enforces dunning escalation ladders with frequency cooldown guards, maintains a local SQLite ledger with relational constraints, tracks payment lifecycles (`PENDING` -> `PARTIAL` -> `PAID`, `OVERDUE`, `VOIDED`), and provides both an interactive terminal CLI suite (`qb-invoicing`) and a modern FastAPI REST API with a responsive web dashboard.
 
 ---
 
@@ -18,7 +18,7 @@ flowchart TD
     B --> C{QBO Integration Mode}
     C -->|QBO_USE_MOCK=false| D[Intuit QBO Accounting API v3<br>/v3/company/realmId/invoice]
     C -->|QBO_USE_MOCK=true| E[Native Mock QBO Engine<br>Persistent Offline Sandbox]
-    D --> F[Local SQLite Ledger Repository<br>orders, invoices, payments, webhook_events]
+    D --> F[Local SQLite Ledger Repository<br>orders, invoices, payments, webhooks, dunning]
     E --> F
     F --> G[Payment Status Tracker<br>Reconciliation Engine]
     G --> H[Status Lifecycle<br>PENDING / PARTIAL / PAID / OVERDUE / VOIDED]
@@ -27,7 +27,11 @@ flowchart TD
     V -->|Signature Match| X[Webhook Router<br>Idempotent Event Deduplication]
     X -->|Payment Create/Update| G
     X -->|Invoice Void/Delete| F
-    F --> Y[FastAPI REST API & Web Dashboard<br>Live Metrics, Invoices, Webhook Feed]
+
+    F --> DE[Automated Dunning Engine<br>Aging Buckets: Current, 1-30d, 31-60d, 61-90d, 90+d]
+    DE -->|Cooldown Evaluation & Notice Dispatch| DH[(dunning_history)]
+
+    F --> Y[FastAPI REST API & Web Dashboard<br>Live Metrics, Aging Cards, Webhook Feed]
     F --> I[Terminal CLI Suite<br>qb-invoicing commands & HTML renderer]
 ```
 
@@ -39,6 +43,7 @@ erDiagram
     INVOICES ||--o{ PAYMENTS : "reconciles"
     INVOICES ||--o{ SYNC_AUDIT_LOGS : "logs"
     WEBHOOK_EVENTS }o--|| INVOICES : "synchronizes"
+    INVOICES ||--o{ DUNNING_HISTORY : "escalates"
 
     ORDERS {
         text order_id PK
@@ -95,6 +100,22 @@ erDiagram
         text result_summary
     }
 
+    DUNNING_HISTORY {
+        integer id PK
+        text invoice_id FK
+        text doc_number
+        text customer_name
+        text customer_email
+        integer escalation_level
+        text level_name
+        integer days_overdue
+        real balance_due
+        text subject
+        text sent_at
+        text status
+        text body_preview
+    }
+
     SYNC_AUDIT_LOGS {
         integer id PK
         text timestamp
@@ -105,6 +126,24 @@ erDiagram
         text details
     }
 ```
+
+---
+
+## Automated Dunning & Accounts Receivable Aging Engine
+
+The platform incorporates an automated overdue collections escalation engine:
+
+### Escalation Tiers & Notice Logic
+| Days Overdue | Escalation Tier | Severity | Subject / Tone |
+| :--- | :--- | :--- | :--- |
+| `<= 0 Days` | Current | Normal | Not overdue; no notice required |
+| `1 - 14 Days` | Tier 1: Friendly Reminder | Low | Courteous notice of missed due date with invoice summary |
+| `15 - 30 Days` | Tier 2: Urgent Notice | Medium | Firm prompt highlighting aging balance and disruption risk |
+| `31 - 60 Days` | Tier 3: Final Demand | High | Strong demand with service suspension warning |
+| `61+ Days` | Tier 4: Collections Warning | Critical | Formal pre-collections notice prior to external collection referral |
+
+- **Frequency Cooldown Guard**: Configurable frequency cap (`DUNNING_COOLDOWN_DAYS=7`) suppresses duplicate reminder dispatches if a customer received a notice recently. Can be overridden with `--force`.
+- **Responsive Email Templates**: Generates dual-format notices (plain text and responsive HTML) containing dynamic color badges, balance highlights, due dates, and direct payment portal URLs.
 
 ---
 
@@ -128,16 +167,17 @@ qb-invoicing serve --host 127.0.0.1 --port 8000
 ```
 
 Navigate to `http://127.0.0.1:8000/` for the real-time responsive dashboard featuring:
-- Live financial metrics: Total Invoiced, Outstanding Receivables, Collected Revenue, and Overdue Balances.
-- Invoice data table with badge statuses (`PENDING`, `PARTIAL`, `PAID`, `OVERDUE`, `VOIDED`).
-- One-click interactive payment modal to record payments directly in the browser.
-- Live Webhook event log feed showing recent QBO push notifications and cryptographic verifications.
+- **Live Financial KPIs**: Total Invoiced, Outstanding Receivables, Collected Revenue, and Overdue Balances.
+- **Accounts Receivable Aging Schedule Cards**: Current, 1-30 Days, 31-60 Days, 61-90 Days, and 90+ Days breakdown.
+- **Interactive Dunning Escalation Button**: One-click dunning cycle execution across all open receivables.
+- **Invoice Ledger Table**: Status pills (`PENDING`, `PARTIAL`, `PAID`, `OVERDUE`, `VOIDED`) and printable HTML links.
+- **Live Dunning Notice & Webhook Audit Logs**: Split feeds showing recent notice dispatches and cryptographic webhook deliveries.
 
 ### API Endpoints Reference
 
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
-| `GET` | `/` | Web Dashboard UI (Tailwind CSS, responsive, interactive) |
+| `GET` | `/` | Interactive Web Dashboard UI (Tailwind CSS, responsive) |
 | `GET` | `/api/metrics` | Summary metrics: total invoiced, collected, outstanding, overdue, count by status |
 | `GET` | `/api/invoices` | List invoices with optional `?status=` and `?limit=` filters |
 | `GET` | `/api/invoices/{qbo_invoice_id}` | Retrieve single invoice details, line items, and payment history |
@@ -146,6 +186,10 @@ Navigate to `http://127.0.0.1:8000/` for the real-time responsive dashboard feat
 | `GET` | `/api/invoices/{qbo_invoice_id}/html` | Render standalone printable HTML invoice document |
 | `POST` | `/api/webhooks/quickbooks` | QBO Webhook ingestion endpoint with HMAC-SHA256 verification |
 | `GET` | `/api/webhooks/events` | List recently ingested webhook events with status and payload |
+| `GET` | `/api/dunning/aging-report` | Calculate Accounts Receivable aging schedule buckets |
+| `GET` | `/api/dunning/history` | Retrieve historical dunning escalation notices |
+| `POST` | `/api/dunning/run` | Execute automated dunning cycle across open invoices |
+| `POST` | `/api/dunning/evaluate/{id}` | Evaluate eligibility and preview dunning notice for an invoice |
 | `GET` | `/docs` | Interactive Swagger / OpenAPI documentation UI |
 
 ---
@@ -259,6 +303,10 @@ cp .env.example .env
 | `DATABASE_PATH` | `storage/qbo_invoicing.db` | Local SQLite ledger file path |
 | `EXPORTS_DIR` | `storage/exports` | Destination directory for exported HTML invoices |
 | `DEFAULT_PAYMENT_TERMS_DAYS` | `30` | Default days added to order date for payment due date |
+| `DUNNING_COOLDOWN_DAYS` | `7` | Days to suppress repeated escalation notices to same customer |
+| `COMPANY_NAME` | `Acme Enterprises LLC` | Business name displayed on dunning notices |
+| `COMPANY_EMAIL` | `billing@example.com` | Billing support email on dunning notices |
+| `PAYMENT_PORTAL_URL` | `https://pay.example.com/invoices` | Direct online payment link inserted into dunning notices |
 
 ---
 
@@ -269,7 +317,7 @@ The package provides the `qb-invoicing` executable CLI tool:
 ### 1. Check Version
 ```bash
 qb-invoicing --version
-# Outputs: qb-invoicing v1.1.0
+# Outputs: qb-invoicing v1.2.0
 ```
 
 ### 2. Initialize Database
@@ -328,6 +376,29 @@ qb-invoicing serve --host 127.0.0.1 --port 8000
 ```bash
 qb-invoicing simulate-webhook --entity Payment --entity-id 5001 --operation Create
 qb-invoicing simulate-webhook --entity Invoice --entity-id 1001 --operation Void
+```
+
+### 13. Accounts Receivable Aging Schedule Report
+```bash
+qb-invoicing aging-report
+qb-invoicing aging-report --as-of 2026-10-15
+```
+
+### 14. Execute Automated Dunning Escalation Cycle
+```bash
+# Dry run simulation without recording notices
+qb-invoicing dunning-run --dry-run
+
+# Live dunning cycle with 7-day cooldown
+qb-invoicing dunning-run --cooldown-days 7
+
+# Bypass cooldown and force notice dispatch
+qb-invoicing dunning-run --force
+```
+
+### 15. Inspect Dunning Notice Audit Log
+```bash
+qb-invoicing dunning-history --limit 25
 ```
 
 ---

@@ -232,3 +232,71 @@ class FinancialMetrics(BaseModel):
     partial_invoices_count: int = 0
     pending_invoices_count: int = 0
     overdue_invoices_count: int = 0
+
+
+class AgingBucket(str, Enum):
+    """Aging bracket categorization for accounts receivable."""
+    CURRENT = "Current"
+    DAYS_1_30 = "1-30 Days"
+    DAYS_31_60 = "31-60 Days"
+    DAYS_61_90 = "61-90 Days"
+    DAYS_OVER_90 = "90+ Days"
+
+
+class DunningLevel(int, Enum):
+    """Escalation severity level for overdue notices."""
+    FRIENDLY = 1        # 1-14 days overdue
+    URGENT = 2          # 15-30 days overdue
+    FINAL_DEMAND = 3    # 31-60 days overdue
+    COLLECTIONS = 4     # 61+ days overdue
+
+
+class AgingBucketInvoice(BaseModel):
+    """Invoice representation in an accounts receivable aging report."""
+    invoice_id: str
+    doc_number: str
+    customer_name: str
+    customer_email: Optional[str] = None
+    due_date: str
+    days_overdue: int
+    balance_due: Decimal
+    bucket: AgingBucket
+
+
+class AgingScheduleReport(BaseModel):
+    """Comprehensive accounts receivable aging schedule."""
+    as_of_date: str
+    current_amount: Decimal = Decimal("0.00")
+    days_1_30_amount: Decimal = Decimal("0.00")
+    days_31_60_amount: Decimal = Decimal("0.00")
+    days_61_90_amount: Decimal = Decimal("0.00")
+    days_over_90_amount: Decimal = Decimal("0.00")
+    total_receivables: Decimal = Decimal("0.00")
+    invoices: List[AgingBucketInvoice] = Field(default_factory=list)
+
+
+class DunningNoticeRecord(BaseModel):
+    """Persistent audit record of a dunning escalation notice."""
+    id: Optional[int] = None
+    invoice_id: str
+    doc_number: str
+    customer_name: str
+    customer_email: Optional[str] = None
+    escalation_level: int
+    level_name: str
+    days_overdue: int
+    balance_due: Decimal
+    subject: str
+    sent_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    status: str = "SENT"
+    body_preview: Optional[str] = None
+
+
+class DunningBatchResult(BaseModel):
+    """Result summary of a batch dunning run."""
+    evaluated_count: int = 0
+    notices_sent_count: int = 0
+    skipped_cooldown_count: int = 0
+    current_count: int = 0
+    notices: List[DunningNoticeRecord] = Field(default_factory=list)
+

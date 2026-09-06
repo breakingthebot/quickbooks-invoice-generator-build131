@@ -37,6 +37,13 @@ class Settings(BaseModel):
     default_tax_code: str = Field(default="TAX")
     default_item_ref: str = Field(default="1")
 
+    # Dunning & Aging Settings
+    dunning_cooldown_days: int = Field(default=7)
+    company_name: str = Field(default="Acme Enterprises LLC")
+    company_email: str = Field(default="billing@example.com")
+    company_phone: str = Field(default="+1 (800) 555-0199")
+    payment_portal_url: str = Field(default="https://pay.example.com/invoices")
+
     @property
     def base_url(self) -> str:
         """Returns the appropriate API base URL."""
@@ -76,6 +83,12 @@ class Settings(BaseModel):
         terms_days = int(os.getenv("DEFAULT_PAYMENT_TERMS_DAYS", "30"))
         currency = os.getenv("DEFAULT_CURRENCY", "USD")
 
+        cooldown_days = int(os.getenv("DUNNING_COOLDOWN_DAYS", "7"))
+        company_name = os.getenv("COMPANY_NAME", "Acme Enterprises LLC")
+        company_email = os.getenv("COMPANY_EMAIL", "billing@example.com")
+        company_phone = os.getenv("COMPANY_PHONE", "+1 (800) 555-0199")
+        portal_url = os.getenv("PAYMENT_PORTAL_URL", "https://pay.example.com/invoices")
+
         return cls(
             use_mock=use_mock,
             environment=env,
@@ -89,6 +102,11 @@ class Settings(BaseModel):
             exports_dir=exports_dir,
             default_payment_terms_days=terms_days,
             default_currency=currency,
+            dunning_cooldown_days=cooldown_days,
+            company_name=company_name,
+            company_email=company_email,
+            company_phone=company_phone,
+            payment_portal_url=portal_url,
         )
 
 

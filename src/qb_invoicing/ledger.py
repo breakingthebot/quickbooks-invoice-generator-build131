@@ -12,6 +12,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from qb_invoicing.models import (
+    AgingBucket,
+    AgingBucketInvoice,
+    AgingScheduleReport,
+    DunningLevel,
+    DunningNoticeRecord,
     FinancialMetrics,
     InvoiceRecord,
     OrderData,
@@ -124,12 +129,33 @@ class LedgerRepository:
                 )
             """)
 
+            # Dunning escalation history table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS dunning_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    invoice_id TEXT NOT NULL,
+                    doc_number TEXT NOT NULL,
+                    customer_name TEXT NOT NULL,
+                    customer_email TEXT,
+                    escalation_level INTEGER NOT NULL,
+                    level_name TEXT NOT NULL,
+                    days_overdue INTEGER NOT NULL,
+                    balance_due REAL NOT NULL,
+                    subject TEXT NOT NULL,
+                    sent_at TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'SENT',
+                    body_preview TEXT
+                )
+            """)
+
             # Indexes for high performance
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices (payment_status)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_invoices_doc_number ON invoices (doc_number)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_invoices_order_id ON invoices (order_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_payments_invoice ON payments (qbo_invoice_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_webhook_events_id ON webhook_events (event_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_dunning_invoice ON dunning_history (invoice_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_dunning_sent_at ON dunning_history (sent_at)")
             conn.commit()
 
     def save_order(self, order: OrderData) -> None:
@@ -273,6 +299,14 @@ class LedgerRepository:
                 ),
             )
             conn.commit()
+
+    def get_invoice(self, identifier: str) -> Optional[InvoiceRecord]:
+        """Fetch invoice by QBO ID, DocNumber, or Order ID."""
+        return (
+            self.get_invoice_by_id(identifier)
+            or self.get_invoice_by_doc_number(identifier)
+            or self.get_invoice_by_order_id(identifier)
+        )
 
     def get_invoice_by_id(self, qbo_invoice_id: str) -> Optional[InvoiceRecord]:
         """Fetch invoice by QuickBooks Online invoice ID."""
@@ -449,6 +483,177 @@ class LedgerRepository:
                 (limit,),
             ).fetchall()
             return [dict(r) for r in rows]
+
+    def record_dunning_notice(self, notice: DunningNoticeRecord) -> int:
+        """Record a sent or simulated dunning notice in the audit history."""
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO dunning_history (
+                    invoice_id, doc_number, customer_name, customer_email,
+                    escalation_level, level_name, days_overdue, balance_due,
+                    subject, sent_at, status, body_preview
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    notice.invoice_id,
+                    notice.doc_number,
+                    notice.customer_name,
+                    notice.customer_email,
+                    notice.escalation_level,
+                    notice.level_name,
+                    notice.days_overdue,
+                    float(notice.balance_due),
+                    notice.subject,
+                    notice.sent_at.isoformat(),
+                    notice.status,
+                    notice.body_preview,
+                ),
+            )
+            conn.commit()
+            return cursor.lastrowid or 0
+
+    def get_last_dunning_notice(self, invoice_id: str) -> Optional[DunningNoticeRecord]:
+        """Fetch the most recent dunning notice recorded for a specific invoice."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM dunning_history
+                WHERE invoice_id = ?
+                ORDER BY sent_at DESC, id DESC
+                LIMIT 1
+                """,
+                (invoice_id,),
+            ).fetchone()
+            if not row:
+                return None
+            return DunningNoticeRecord(
+                id=row["id"],
+                invoice_id=row["invoice_id"],
+                doc_number=row["doc_number"],
+                customer_name=row["customer_name"],
+                customer_email=row["customer_email"],
+                escalation_level=row["escalation_level"],
+                level_name=row["level_name"],
+                days_overdue=row["days_overdue"],
+                balance_due=Decimal(str(row["balance_due"])),
+                subject=row["subject"],
+                sent_at=datetime.fromisoformat(row["sent_at"]),
+                status=row["status"],
+                body_preview=row["body_preview"],
+            )
+
+    def get_dunning_history(self, limit: int = 50) -> List[DunningNoticeRecord]:
+        """Fetch recent dunning escalation notices."""
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM dunning_history
+                ORDER BY sent_at DESC, id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            return [
+                DunningNoticeRecord(
+                    id=r["id"],
+                    invoice_id=r["invoice_id"],
+                    doc_number=r["doc_number"],
+                    customer_name=r["customer_name"],
+                    customer_email=r["customer_email"],
+                    escalation_level=r["escalation_level"],
+                    level_name=r["level_name"],
+                    days_overdue=r["days_overdue"],
+                    balance_due=Decimal(str(r["balance_due"])),
+                    subject=r["subject"],
+                    sent_at=datetime.fromisoformat(r["sent_at"]),
+                    status=r["status"],
+                    body_preview=r["body_preview"],
+                )
+                for r in rows
+            ]
+
+    def get_aging_report(self, as_of_date: Optional[str] = None) -> AgingScheduleReport:
+        """Calculate accounts receivable aging schedule for all open invoices."""
+        if as_of_date:
+            try:
+                ref_date = datetime.strptime(as_of_date, "%Y-%m-%d").date()
+            except ValueError:
+                ref_date = datetime.now(timezone.utc).date()
+        else:
+            ref_date = datetime.now(timezone.utc).date()
+
+        as_of_str = ref_date.isoformat()
+        current_amt = Decimal("0.00")
+        d1_30_amt = Decimal("0.00")
+        d31_60_amt = Decimal("0.00")
+        d61_90_amt = Decimal("0.00")
+        d_over_90_amt = Decimal("0.00")
+        total_rec = Decimal("0.00")
+        bucket_invoices: List[AgingBucketInvoice] = []
+
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM invoices
+                WHERE balance_due > 0.001
+                  AND payment_status NOT IN ('PAID', 'VOIDED')
+                ORDER BY due_date ASC, id ASC
+                """
+            ).fetchall()
+
+            for r in rows:
+                inv = self._row_to_invoice(r)
+                due_d_str = inv.due_date or inv.txn_date
+                try:
+                    due_d = datetime.strptime(due_d_str, "%Y-%m-%d").date()
+                except ValueError:
+                    due_d = ref_date
+
+                days_overdue = (ref_date - due_d).days
+                bal = inv.balance_due
+
+                if days_overdue <= 0:
+                    bucket = AgingBucket.CURRENT
+                    current_amt += bal
+                elif 1 <= days_overdue <= 30:
+                    bucket = AgingBucket.DAYS_1_30
+                    d1_30_amt += bal
+                elif 31 <= days_overdue <= 60:
+                    bucket = AgingBucket.DAYS_31_60
+                    d31_60_amt += bal
+                elif 61 <= days_overdue <= 90:
+                    bucket = AgingBucket.DAYS_61_90
+                    d61_90_amt += bal
+                else:
+                    bucket = AgingBucket.DAYS_OVER_90
+                    d_over_90_amt += bal
+
+                total_rec += bal
+
+                bucket_invoices.append(
+                    AgingBucketInvoice(
+                        invoice_id=inv.qbo_invoice_id,
+                        doc_number=inv.doc_number,
+                        customer_name=inv.customer_name,
+                        customer_email=inv.customer_email,
+                        due_date=due_d_str,
+                        days_overdue=days_overdue,
+                        balance_due=bal,
+                        bucket=bucket,
+                    )
+                )
+
+        return AgingScheduleReport(
+            as_of_date=as_of_str,
+            current_amount=current_amt.quantize(Decimal("0.01")),
+            days_1_30_amount=d1_30_amt.quantize(Decimal("0.01")),
+            days_31_60_amount=d31_60_amt.quantize(Decimal("0.01")),
+            days_61_90_amount=d61_90_amt.quantize(Decimal("0.01")),
+            days_over_90_amount=d_over_90_amt.quantize(Decimal("0.01")),
+            total_receivables=total_rec.quantize(Decimal("0.01")),
+            invoices=bucket_invoices,
+        )
 
     def _row_to_invoice(self, r: sqlite3.Row) -> InvoiceRecord:
         return InvoiceRecord(

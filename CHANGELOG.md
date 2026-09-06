@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-09-05
+
+### Added
+- **Automated Dunning & Escalation Engine (`src/qb_invoicing/dunning.py`)**:
+  - Four escalation severity tiers: Tier 1 Friendly (1-14d), Tier 2 Urgent (15-30d), Tier 3 Final Demand (31-60d), and Tier 4 Collections Warning (61+d).
+  - Dynamic template generator for plain-text and responsive HTML email notices with color-coded badges, balance summaries, and direct payment portal links.
+  - Frequency cooldown guard (default 7 days) to prevent over-contacting customers, with optional bypass flag.
+  - Batch cycle execution method (`run_dunning_cycle`) evaluating all open accounts receivable.
+- **Accounts Receivable Aging Schedule Schedule**:
+  - Dynamic aging bucket categorization: `Current`, `1-30 Days`, `31-60 Days`, `61-90 Days`, and `90+ Days`.
+  - Aging report generator with per-bucket totals and detailed invoice breakdowns.
+- **Ledger Persistence & Audit Trail**:
+  - New `dunning_history` table in SQLite tracking notice dispatches, escalation levels, days overdue, balances, and timestamps.
+  - Ledger methods for notice recording, history retrieval, and cooldown lookups.
+- **REST API & Web Dashboard Enhancements**:
+  - REST endpoints: `GET /api/dunning/aging-report`, `GET /api/dunning/history`, `POST /api/dunning/run`, and `POST /api/dunning/evaluate/{id}`.
+  - Interactive Web Dashboard (`GET /`): Aging schedule visual card grid, "Run Dunning Escalation" one-click action, and live dunning audit history feed.
+- **CLI Commands**:
+  - `qb-invoicing aging-report [--as-of]`: Prints Rich formatted accounts receivable aging schedule and invoice breakdown.
+  - `qb-invoicing dunning-run [--as-of, --cooldown-days, --force, --dry-run]`: Executes automated dunning cycle.
+  - `qb-invoicing dunning-history [--limit]`: Displays past dunning escalation notices.
+- **Expanded Test Suite**:
+  - Added `tests/test_dunning.py` and updated `tests/test_api.py` and `tests/test_cli.py` (total **43 passing tests**).
+
 ## [1.1.0] - 2026-09-05
 
 ### Added

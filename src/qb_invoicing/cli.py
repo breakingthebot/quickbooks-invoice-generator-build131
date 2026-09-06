@@ -504,6 +504,175 @@ def simulate_webhook_cmd(entity: str, operation: str, entity_id: str):
     console.print_json(json.dumps(result))
 
 
+@cli.command("aging-report")
+@click.option("--as-of", "as_of_date", default=None, help="Reference evaluation date (YYYY-MM-DD)")
+def aging_report_cmd(as_of_date: Optional[str]):
+    """Display Accounts Receivable aging schedule report with aging buckets."""
+    from qb_invoicing.dunning import DunningEngine
+
+    _, ledger, _, _, cfg = get_components()
+    engine = DunningEngine(ledger=ledger, settings=cfg)
+    report = engine.get_aging_schedule(as_of_date=as_of_date)
+
+    # Summary table
+    summary_table = Table(
+        title=f"Accounts Receivable Aging Schedule (As of {report.as_of_date})",
+        show_header=True,
+        header_style="bold blue",
+    )
+    summary_table.add_column("Aging Bucket", style="bold")
+    summary_table.add_column("Escalation Tier", style="cyan")
+    summary_table.add_column("Amount", justify="right")
+
+    summary_table.add_row("Current (Not Due)", "None", f"[green]${report.current_amount:.2f}[/green]")
+    summary_table.add_row("1-30 Days Overdue", "Tier 1 (Friendly)", f"[blue]${report.days_1_30_amount:.2f}[/blue]")
+    summary_table.add_row("31-60 Days Overdue", "Tier 2 (Urgent)", f"[yellow]${report.days_31_60_amount:.2f}[/yellow]")
+    summary_table.add_row("61-90 Days Overdue", "Tier 3 (Final Demand)", f"[orange3]${report.days_61_90_amount:.2f}[/orange3]")
+    summary_table.add_row("90+ Days Overdue", "Tier 4 (Collections)", f"[bold red]${report.days_over_90_amount:.2f}[/bold red]")
+    summary_table.add_section()
+    summary_table.add_row("Total Receivables", "All Tiers", f"[bold green]${report.total_receivables:.2f}[/bold green]")
+
+    console.print(summary_table)
+
+    # Detail table for open invoices
+    if report.invoices:
+        detail_table = Table(
+            title=f"Receivables Ledger Breakdown ({len(report.invoices)} open invoices)",
+            show_header=True,
+            header_style="bold magenta",
+        )
+        detail_table.add_column("Doc #", style="bold")
+        detail_table.add_column("Customer")
+        detail_table.add_column("Due Date")
+        detail_table.add_column("Overdue", justify="right")
+        detail_table.add_column("Balance Due", justify="right")
+        detail_table.add_column("Bucket", justify="center")
+
+        bucket_color = {
+            "Current": "green",
+            "1-30 Days": "blue",
+            "31-60 Days": "yellow",
+            "61-90 Days": "orange3",
+            "90+ Days": "red",
+        }
+
+        for inv in report.invoices:
+            c = bucket_color.get(inv.bucket.value, "white")
+            detail_table.add_row(
+                inv.doc_number,
+                inv.customer_name,
+                inv.due_date,
+                f"{inv.days_overdue} days",
+                f"${inv.balance_due:.2f}",
+                f"[{c}]{inv.bucket.value}[/{c}]",
+            )
+        console.print(detail_table)
+    else:
+        console.print("[dim]No open invoices currently tracked in ledger.[/dim]")
+
+
+@cli.command("dunning-run")
+@click.option("--as-of", "as_of_date", default=None, help="Reference evaluation date (YYYY-MM-DD)")
+@click.option("--cooldown-days", default=7, type=int, help="Days to suppress consecutive reminder notices")
+@click.option("--force", is_flag=True, help="Bypass cooldown check and evaluate all overdue invoices")
+@click.option("--dry-run", is_flag=True, help="Simulate dunning cycle without recording sent notices")
+def dunning_run_cmd(as_of_date: Optional[str], cooldown_days: int, force: bool, dry_run: bool):
+    """Execute automated dunning cycle to evaluate and dispatch overdue escalation notices."""
+    from qb_invoicing.dunning import DunningEngine
+
+    _, ledger, _, _, cfg = get_components()
+    engine = DunningEngine(ledger=ledger, settings=cfg)
+
+    console.print("[bold blue]Executing Automated Dunning Escalation Cycle...[/bold blue]")
+    if dry_run:
+        console.print("[yellow][SIMULATION] Running in DRY-RUN mode. Notices will not be persisted as sent.[/yellow]")
+
+    result = engine.run_dunning_cycle(
+        as_of_date=as_of_date,
+        cooldown_days=cooldown_days,
+        force=force,
+        dry_run=dry_run,
+    )
+
+    console.print(f"  - Invoices Evaluated: [bold]{result.evaluated_count}[/bold]")
+    console.print(f"  - Current / Not Due: [green]{result.current_count}[/green]")
+    console.print(f"  - Skipped (Cooldown): [yellow]{result.skipped_cooldown_count}[/yellow]")
+    console.print(f"  - Notices Dispatched: [bold green]{result.notices_sent_count}[/bold green]")
+
+    if result.notices:
+        table = Table(
+            title=f"Dunning Notices {'Simulated' if dry_run else 'Dispatched'}",
+            show_header=True,
+            header_style="bold green",
+        )
+        table.add_column("Doc #", style="bold")
+        table.add_column("Customer")
+        table.add_column("Tier", justify="center")
+        table.add_column("Overdue", justify="right")
+        table.add_column("Balance Due", justify="right")
+        table.add_column("Subject")
+        table.add_column("Status", justify="center")
+
+        tier_color = {1: "blue", 2: "yellow", 3: "orange3", 4: "red"}
+
+        for n in result.notices:
+            tc = tier_color.get(n.escalation_level, "white")
+            table.add_row(
+                n.doc_number,
+                n.customer_name,
+                f"[{tc}]Tier {n.escalation_level}: {n.level_name}[/{tc}]",
+                f"{n.days_overdue} days",
+                f"${n.balance_due:.2f}",
+                n.subject,
+                f"[green]{n.status}[/green]",
+            )
+        console.print(table)
+    else:
+        console.print("[dim]No notices needed dispatching based on current due dates and cooldown rules.[/dim]")
+
+
+@cli.command("dunning-history")
+@click.option("--limit", default=25, type=int, help="Maximum number of historical notices to retrieve")
+def dunning_history_cmd(limit: int):
+    """View recent dunning escalation notice dispatch logs."""
+    _, ledger, _, _, _ = get_components()
+    history = ledger.get_dunning_history(limit=limit)
+
+    if not history:
+        console.print("[yellow]No dunning notices recorded in the ledger history.[/yellow]")
+        return
+
+    table = Table(
+        title=f"Dunning Notice Audit Log (Last {len(history)})",
+        show_header=True,
+        header_style="bold blue",
+    )
+    table.add_column("Doc #", style="bold")
+    table.add_column("Customer")
+    table.add_column("Escalation Tier")
+    table.add_column("Overdue", justify="right")
+    table.add_column("Balance", justify="right")
+    table.add_column("Dispatched At")
+    table.add_column("Status", justify="center")
+
+    tier_color = {1: "blue", 2: "yellow", 3: "orange3", 4: "red"}
+
+    for h in history:
+        tc = tier_color.get(h.escalation_level, "white")
+        table.add_row(
+            h.doc_number,
+            h.customer_name,
+            f"[{tc}]Tier {h.escalation_level}: {h.level_name}[/{tc}]",
+            f"{h.days_overdue} days",
+            f"${h.balance_due:.2f}",
+            h.sent_at.strftime("%Y-%m-%d %H:%M"),
+            f"[green]{h.status}[/green]",
+        )
+
+    console.print(table)
+
+
 if __name__ == "__main__":
     cli()
+
 
