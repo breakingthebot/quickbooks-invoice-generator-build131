@@ -1,7 +1,8 @@
 # QuickBooks Online Invoice Generator & Payment Status Tracker
 
 [![CI](https://github.com/breakingthebot/quickbooks-invoice-generator-build131/actions/workflows/ci.yml/badge.svg)](https://github.com/breakingthebot/quickbooks-invoice-generator-build131/actions/workflows/ci.yml)
-[![Version: 1.4.0](https://img.shields.io/badge/Version-1.4.0-brightgreen.svg)](https://github.com/breakingthebot/quickbooks-invoice-generator-build131)
+[![Version: 1.5.0](https://img.shields.io/badge/Version-1.5.0-brightgreen.svg)](https://github.com/breakingthebot/quickbooks-invoice-generator-build131)
+[![Stripe](https://img.shields.io/badge/Payments-Stripe%20%7C%20ACH-635BFF?logo=stripe&logoColor=white)](https://stripe.com)
 [![Android](https://img.shields.io/badge/Android-Kotlin%202.0%20%7C%20Compose-3DDC84?logo=android&logoColor=white)](https://developer.android.com/)
 [![Next.js 14](https://img.shields.io/badge/Next.js-14.2%20App%20Router-black?logo=next.js)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?logo=typescript)](https://www.typescriptlang.org/)
@@ -11,11 +12,12 @@
 [![Intuit QBO v3](https://img.shields.io/badge/QuickBooks-Accounting%20API%20v3-green.svg)](https://developer.intuit.com/)
 [![Code Style: Black](https://img.shields.io/badge/Code%20Style-Black-000000.svg)](https://github.com/psf/black)
 
-A production-ready QuickBooks Online (QBO) invoice generator, webhook ingestion engine, automated dunning escalation system, real-time payment reconciliation platform, and cross-platform enterprise ecosystem. Transforms multi-channel e-commerce, ERP, or consultation order data into Intuit QuickBooks Online Accounting API v3 invoices, manages customer synchronization, receives and cryptographically verifies QuickBooks Online webhooks via HMAC-SHA256 (`intuit-signature`), categorizes outstanding receivables into aging schedule buckets, enforces dunning escalation ladders with frequency cooldown guards, maintains a local SQLite ledger with relational constraints, tracks payment lifecycles (`PENDING` -> `PARTIAL` -> `PAID`, `OVERDUE`, `VOIDED`), and provides:
-1. **Native Android Mobile App (`android/`)**: Built in Kotlin 2.0 with Jetpack Compose & Material 3, providing real-time financial KPIs, AR Aging buckets, dynamic invoice generator wizard with line items repeater, instant payment settlement modal, and configurable backend endpoints.
-2. **Interactive Next.js 14 Web App (`web/`)**: A production-grade React 18, TypeScript, and Tailwind CSS single-page console built with the App Router, designed for seamless one-click Vercel deployment with dynamic invoice creation, payment recording, and real-time dunning escalation.
-3. **FastAPI REST API**: High-performance async REST backend with CORS support, OpenAPI documentation, and automated webhook routing.
-4. **Terminal CLI Suite (`qb-invoicing`)**: Complete operational CLI for batch processing, ledger inquiries, dunning runs, and webhook simulations.
+A production-ready QuickBooks Online (QBO) invoice generator, webhook ingestion engine, automated dunning escalation system, multi-gateway Stripe & ACH payment checkout engine, real-time payment reconciliation platform, and cross-platform enterprise ecosystem. Transforms multi-channel e-commerce, ERP, or consultation order data into Intuit QuickBooks Online Accounting API v3 invoices, manages customer synchronization, receives and cryptographically verifies QuickBooks Online webhooks (`intuit-signature`) and Stripe webhooks (`stripe-signature`) via HMAC-SHA256, categorizes outstanding receivables into aging schedule buckets, enforces dunning escalation ladders with frequency cooldown guards, maintains a local SQLite ledger with relational constraints, tracks payment lifecycles (`PENDING` -> `PARTIAL` -> `PAID`, `OVERDUE`, `VOIDED`), and provides:
+1. **Multi-Gateway Payment Checkout & Stripe / ACH Auto-Settlement Engine**: Self-service Stripe Checkout sessions, hosted payment portal (`/pay/{identifier}`), ACH bank debit, cryptographic webhook listeners, and automatic reconciliation into QBO Payment entities.
+2. **Native Android Mobile App (`android/`)**: Built in Kotlin 2.0 with Jetpack Compose & Material 3, providing real-time financial KPIs, AR Aging buckets, dynamic invoice generator wizard with line items repeater, instant payment settlement modal, and configurable backend endpoints.
+3. **Interactive Next.js 14 Web App (`web/`)**: A production-grade React 18, TypeScript, and Tailwind CSS single-page console built with the App Router, designed for seamless one-click Vercel deployment with dynamic invoice creation, payment recording, and real-time dunning escalation.
+4. **FastAPI REST API**: High-performance async REST backend with CORS support, OpenAPI documentation, and automated webhook routing.
+5. **Terminal CLI Suite (`qb-invoicing`)**: Complete operational CLI for batch processing, ledger inquiries, dunning runs, Stripe checkout links, and webhook simulations.
 
 ---
 
@@ -197,6 +199,12 @@ Navigate to `http://127.0.0.1:8000/` for the real-time responsive dashboard feat
 | `GET` | `/api/invoices/{qbo_invoice_id}/html` | Render standalone printable HTML invoice document |
 | `POST` | `/api/webhooks/quickbooks` | QBO Webhook ingestion endpoint with HMAC-SHA256 verification |
 | `GET` | `/api/webhooks/events` | List recently ingested webhook events with status and payload |
+| `POST` | `/api/invoices/{qbo_invoice_id}/checkout-session` | Generate customer-facing Stripe Checkout session (Card/ACH) |
+| `POST` | `/api/webhooks/stripe` | Cryptographically verified Stripe webhook receiver (HMAC-SHA256) |
+| `POST` | `/api/pay/simulate` | Sandbox simulation endpoint for instant customer payment settlement |
+| `GET` | `/pay/{qbo_invoice_id}` | Customer-facing self-service payment portal page (HTML) |
+| `GET` | `/pay/checkout/{session_id}` | Hosted Stripe Checkout simulation sandbox page (HTML) |
+| `GET` | `/pay/success/{qbo_invoice_id}` | Customer payment confirmation and receipt acknowledgment page (HTML) |
 | `GET` | `/api/dunning/aging-report` | Calculate Accounts Receivable aging schedule buckets |
 | `GET` | `/api/dunning/history` | Retrieve historical dunning escalation notices |
 | `POST` | `/api/dunning/run` | Execute automated dunning cycle across open invoices |
@@ -434,7 +442,7 @@ The package provides the `qb-invoicing` executable CLI tool:
 ### 1. Check Version
 ```bash
 qb-invoicing --version
-# Outputs: qb-invoicing v1.4.0
+# Outputs: qb-invoicing v1.5.0
 ```
 
 ### 2. Initialize Database
@@ -516,6 +524,21 @@ qb-invoicing dunning-run --force
 ### 15. Inspect Dunning Notice Audit Log
 ```bash
 qb-invoicing dunning-history --limit 25
+```
+
+### 16. Generate Self-Service Stripe Checkout Session
+```bash
+qb-invoicing checkout --invoice INV-2026-001
+qb-invoicing checkout --invoice 1001
+```
+
+### 17. Simulate Stripe Payment Settlement Webhook
+```bash
+# Settle with Credit Card
+qb-invoicing simulate-stripe-payment --invoice INV-2026-001 --method card
+
+# Settle partial amount with US Bank Account (ACH)
+qb-invoicing simulate-stripe-payment --invoice 1001 --amount 250.00 --method ach
 ```
 
 ---

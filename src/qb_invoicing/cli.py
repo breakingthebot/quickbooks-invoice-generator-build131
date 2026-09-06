@@ -5,10 +5,12 @@ Command Line Interface for QuickBooks Online Invoicing.
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Optional
+from uuid import uuid4
 
 import click
 from rich.console import Console
@@ -453,7 +455,9 @@ def serve_cmd(host: str, port: int):
     import uvicorn
 
     console.print(f"[bold green][OK][/bold green] Starting QuickBooks Invoicing Dashboard at: [cyan]http://{host}:{port}[/cyan]")
-    console.print(f"  - Webhook endpoint: [cyan]http://{host}:{port}/api/webhooks/quickbooks[/cyan]")
+    console.print(f"  - QuickBooks Webhook: [cyan]http://{host}:{port}/api/webhooks/quickbooks[/cyan]")
+    console.print(f"  - Stripe Webhook: [cyan]http://{host}:{port}/api/webhooks/stripe[/cyan]")
+    console.print(f"  - Customer Payment Portal: [cyan]http://{host}:{port}/pay/:invoice_id[/cyan]")
     console.print(f"  - API Documentation: [cyan]http://{host}:{port}/docs[/cyan]")
     uvicorn.run("qb_invoicing.api:app", host=host, port=port, reload=False)
 
@@ -670,6 +674,134 @@ def dunning_history_cmd(limit: int):
         )
 
     console.print(table)
+
+
+@cli.command("checkout")
+@click.option("--invoice", "-i", "identifier", required=True, help="Invoice ID or DocNumber to generate checkout session for")
+def checkout_cmd(identifier: str):
+    """Generate a self-service Stripe Checkout session and payment portal link."""
+    from qb_invoicing.stripe_engine import StripeCheckoutEngine
+
+    _, ledger, _, _, cfg = get_components()
+    engine = StripeCheckoutEngine(
+        api_key=cfg.stripe_api_key,
+        webhook_secret=cfg.stripe_webhook_secret,
+        use_mock=cfg.stripe_use_mock,
+    )
+
+    inv = (
+        ledger.get_invoice_by_id(identifier)
+        or ledger.get_invoice_by_doc_number(identifier)
+        or ledger.get_invoice_by_order_id(identifier)
+    )
+    if not inv:
+        console.print(f"[bold red][ERROR][/bold red] Invoice '{identifier}' not found in ledger database.")
+        return
+
+    session = engine.create_checkout_session(inv)
+
+    console.print(f"[bold green][OK][/bold green] Created Stripe Checkout Session for Invoice [bold cyan]{inv.doc_number}[/bold cyan]:")
+    table = Table(show_header=False)
+    table.add_column("Field", style="bold")
+    table.add_column("Value")
+    table.add_row("Session ID", f"[yellow]{session.session_id}[/yellow]")
+    table.add_row("Doc #", session.doc_number)
+    table.add_row("Customer", session.customer_name or "N/A")
+    table.add_row("Amount", f"${session.amount_total:.2f} {session.currency.upper()}")
+    table.add_row("Payment Status", session.payment_status)
+    table.add_row("Checkout URL", f"[cyan]{session.checkout_url}[/cyan]")
+    table.add_row("Customer Portal", f"[cyan]{cfg.payment_portal_url.rstrip('/')}/pay/{inv.qbo_invoice_id}[/cyan]")
+    console.print(table)
+
+
+@cli.command("simulate-stripe-payment")
+@click.option("--invoice", "-i", "identifier", required=True, help="Invoice ID or DocNumber to settle")
+@click.option("--amount", "-a", type=float, default=None, help="Amount to pay (defaults to remaining balance)")
+@click.option("--method", "-m", type=click.Choice(["card", "ach"], case_sensitive=False), default="card", help="Payment method")
+def simulate_stripe_payment_cmd(identifier: str, amount: Optional[float], method: str):
+    """Simulate an incoming Stripe payment webhook with valid HMAC-SHA256 signature and auto-reconciliation."""
+    from qb_invoicing.stripe_engine import StripeCheckoutEngine
+
+    client, ledger, tracker, _, cfg = get_components()
+    engine = StripeCheckoutEngine(
+        api_key=cfg.stripe_api_key,
+        webhook_secret=cfg.stripe_webhook_secret,
+        use_mock=cfg.stripe_use_mock,
+    )
+
+    inv = (
+        ledger.get_invoice_by_id(identifier)
+        or ledger.get_invoice_by_doc_number(identifier)
+        or ledger.get_invoice_by_order_id(identifier)
+    )
+    if not inv:
+        console.print(f"[bold red][ERROR][/bold red] Invoice '{identifier}' not found in ledger database.")
+        return
+
+    pay_amount = Decimal(str(amount)) if amount is not None else inv.balance_due
+    if pay_amount <= Decimal("0.00"):
+        pay_amount = inv.total_amount
+
+    cents = int(pay_amount * 100)
+    pm_type = "us_bank_account" if method.lower() == "ach" else "card"
+    now_ts = int(time.time())
+
+    mock_event = {
+        "id": f"evt_cli_{uuid4().hex[:12]}",
+        "object": "event",
+        "type": "checkout.session.completed",
+        "created": now_ts,
+        "data": {
+            "object": {
+                "id": f"cs_cli_{uuid4().hex[:16]}",
+                "payment_intent": f"pi_cli_{uuid4().hex[:16]}",
+                "amount_total": cents,
+                "currency": inv.currency.lower(),
+                "payment_status": "paid",
+                "payment_method_types": [pm_type],
+                "metadata": {
+                    "qbo_invoice_id": inv.qbo_invoice_id,
+                    "doc_number": inv.doc_number,
+                },
+            }
+        },
+    }
+
+    payload_bytes = json.dumps(mock_event).encode("utf-8")
+    sig_header = engine.generate_signed_webhook_header(payload_bytes, timestamp=now_ts)
+
+    console.print(f"[bold blue]Simulating Stripe Webhook ([yellow]{method.upper()}[/yellow])...[/bold blue]")
+    console.print(f"  - Invoice: [cyan]{inv.doc_number}[/cyan] (QBO ID: {inv.qbo_invoice_id})")
+    console.print(f"  - Amount: [bold green]${pay_amount:.2f}[/bold green]")
+    console.print(f"  - Computed Stripe-Signature HMAC-SHA256: [dim]{sig_header[:40]}...[/dim]")
+
+    # Verify signature
+    valid = engine.verify_webhook_signature(payload_bytes, sig_header)
+    if not valid:
+        console.print("[bold red][FAILED][/bold red] Stripe signature verification failed!")
+        return
+
+    result = engine.process_webhook_event(
+        event_dict=mock_event,
+        ledger=ledger,
+        payment_tracker=tracker,
+        qbo_client=client,
+    )
+
+    if result.success:
+        console.print("[bold green][OK][/bold green] Stripe Payment Auto-Settled Successfully!")
+        table = Table(show_header=False)
+        table.add_column("Field", style="bold")
+        table.add_column("Value")
+        table.add_row("Invoice Doc #", result.doc_number)
+        table.add_row("Amount Paid", f"${result.amount_paid:.2f}")
+        table.add_row("Remaining Balance", f"${result.new_balance:.2f}")
+        table.add_row("New Payment Status", f"[bold green]{result.payment_status.value}[/bold green]")
+        table.add_row("QBO Payment ID", str(result.qbo_payment_id))
+        table.add_row("Message", result.message)
+        console.print(table)
+    else:
+        console.print(f"[bold red][ERROR][/bold red] Settlement failed: {result.message}")
 
 
 if __name__ == "__main__":

@@ -54,7 +54,10 @@ def generate_dunning_content(
     cust = invoice.customer_name
     bal_str = f"${invoice.balance_due:,.2f} {invoice.currency}"
     due_date = invoice.due_date or invoice.txn_date
-    pay_link = f"{portal_url}?inv={invoice.qbo_invoice_id}"
+    if "/pay" in portal_url:
+        pay_link = f"{portal_url.rstrip('/')}/{invoice.qbo_invoice_id}"
+    else:
+        pay_link = f"{portal_url.rstrip('/')}/pay/{invoice.qbo_invoice_id}"
 
     # Escalation theme color & styling
     if level == DunningLevel.FRIENDLY:

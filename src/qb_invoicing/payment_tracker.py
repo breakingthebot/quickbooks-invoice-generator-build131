@@ -8,6 +8,7 @@ import json
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
+from uuid import uuid4
 
 from qb_invoicing.ledger import LedgerRepository
 from qb_invoicing.models import (
@@ -186,3 +187,51 @@ class PaymentStatusTracker:
         # Trigger synchronization of invoice status
         self.sync_invoice_status(qbo_invoice_id)
         return pay_record
+
+    def record_direct_payment(
+        self,
+        invoice_id: str,
+        amount: Decimal,
+        payment_method: str = "CreditCard",
+        reference_num: Optional[str] = None,
+        qbo_payment_id: Optional[str] = None,
+    ) -> Any:
+        """
+        Record a direct gateway payment (e.g. Stripe, ACH) against an invoice in the ledger
+        and automatically reconcile invoice balance and status.
+        """
+        inv = self.ledger.get_invoice_by_id(invoice_id)
+        if not inv:
+            raise ValueError(f"Invoice {invoice_id} does not exist in local database.")
+
+        pid = qbo_payment_id or f"PAY-{uuid4().hex[:8]}"
+        pay_rec = PaymentRecord(
+            qbo_payment_id=pid,
+            qbo_invoice_id=invoice_id,
+            amount=amount,
+            payment_method=payment_method,
+            txn_date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            reference_num=reference_num,
+            currency=inv.currency,
+        )
+        self.ledger.record_payment(pay_rec)
+
+        new_balance = max(Decimal("0.00"), inv.balance_due - amount)
+        new_status = self.determine_status(
+            total_amount=inv.total_amount,
+            balance_due=new_balance,
+            due_date_str=inv.due_date,
+        )
+        self.ledger.update_invoice_payment_status(
+            qbo_invoice_id=invoice_id,
+            balance_due=new_balance,
+            payment_status=new_status,
+        )
+        updated_inv = self.ledger.get_invoice_by_id(invoice_id)
+
+        class DirectPaymentResult:
+            def __init__(self, invoice, payment):
+                self.invoice = invoice
+                self.payment = payment
+
+        return DirectPaymentResult(updated_inv, pay_rec)

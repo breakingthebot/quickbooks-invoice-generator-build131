@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-09-05
+
+### Added
+- **Multi-Gateway Payment Checkout & Stripe / ACH Auto-Settlement Engine (`src/qb_invoicing/stripe_engine.py`)**:
+  - Customer-facing Stripe Checkout Session creator (`create_checkout_session`) supporting Credit Cards, Apple Pay, Google Pay, and US Bank Account (ACH direct debit).
+  - Cryptographic Stripe Webhook receiver with HMAC-SHA256 signature verification (`Stripe-Signature: t=...,v1=...`), timestamp tolerance freshness checks, and constant-time string comparisons.
+  - Automatic payment reconciliation engine: reconciles successful payments (`checkout.session.completed`, `payment_intent.succeeded`) directly into QuickBooks Online `Payment` entities and updates SQLite invoice balances.
+  - Idempotency guard backed by SQLite `webhook_events` table guaranteeing at-most-once settlement.
+  - Built-in sandbox mock simulator (`STRIPE_USE_MOCK=true`) for 100% offline testability without requiring live API keys.
+- **Hosted Customer Payment Portal (`/pay`)**:
+  - `GET /pay/{identifier}`: Customer-facing payment portal showing invoice details, status badges, payment channel selector (Card vs. ACH), and Stripe Checkout button.
+  - `GET /pay/checkout/{session_id}`: Hosted Stripe Checkout sandbox simulator allowing end-to-end payment authorization testing.
+  - `GET /pay/success/{identifier}`: Clean emerald-themed payment receipt and confirmation page with automatic QBO reconciliation notice.
+  - `POST /api/pay/simulate`: Convenience simulation endpoint for 1-click test settlements from portal and integration workflows.
+- **REST API Endpoints (`src/qb_invoicing/api.py`)**:
+  - `POST /api/invoices/{identifier}/checkout-session`: Generates a customer-facing Stripe checkout session.
+  - `POST /api/webhooks/stripe`: Cryptographically verifies incoming Stripe webhook notifications.
+  - Updated web dashboard (`/`) with direct "Pay Portal" and "HTML" invoice action buttons.
+- **CLI Commands (`src/qb_invoicing/cli.py`)**:
+  - `qb-invoicing checkout --invoice <id/doc_number>`: Generates a self-service Stripe Checkout session and payment portal link.
+  - `qb-invoicing simulate-stripe-payment --invoice <id/doc_number> [--amount] [--method <card|ach>]`: Simulates an incoming signed Stripe webhook and verifies automatic QBO/ledger reconciliation.
+  - Updated `serve` command to output Stripe Webhook and Payment Portal endpoints.
+- **Dunning Integration (`src/qb_invoicing/dunning.py`)**:
+  - Enhanced dunning notices to embed direct self-service checkout links (`/pay/{qbo_invoice_id}`).
+- **Test Suite (`tests/test_stripe.py`)**:
+  - 16 new unit and integration tests covering session creation, cryptographic verification, ACH/card processing, idempotency, REST endpoints, and CLI commands (all 59 tests passing).
+
 ## [1.4.0] - 2026-09-05
 
 ### Added

@@ -5,8 +5,10 @@ FastAPI REST API & Interactive Web Dashboard for QuickBooks Invoicing.
 from __future__ import annotations
 
 import json
+import time
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,10 +28,13 @@ from qb_invoicing.models import (
     OrderData,
     PaymentRecord,
     PaymentStatus,
+    StripeCheckoutSession,
+    StripePaymentIntentResult,
 )
 from qb_invoicing.payment_tracker import PaymentStatusTracker
 from qb_invoicing.qbo_client import QuickBooksClient
 from qb_invoicing.renderer import InvoiceRenderer
+from qb_invoicing.stripe_engine import StripeCheckoutEngine
 from qb_invoicing.transformer import OrderTransformer
 from qb_invoicing.webhooks import WebhookProcessor
 
@@ -38,6 +43,12 @@ class ManualPaymentRequest(BaseModel):
     amount: float
     payment_method: str = "CreditCard"
     reference_num: Optional[str] = None
+
+
+class StripeSimulateRequest(BaseModel):
+    invoice_id: str
+    amount: Optional[float] = None
+    payment_method: Optional[str] = "CreditCard"
 
 
 class DunningRunRequest(BaseModel):
@@ -71,6 +82,11 @@ def create_app(cfg: Optional[Settings] = None) -> FastAPI:
     transformer = OrderTransformer(default_terms_days=app_config.default_payment_terms_days)
     webhook_processor = WebhookProcessor(client, ledger, tracker)
     dunning_engine = DunningEngine(ledger=ledger, settings=app_config)
+    stripe_engine = StripeCheckoutEngine(
+        api_key=app_config.stripe_api_key,
+        webhook_secret=app_config.stripe_webhook_secret,
+        use_mock=app_config.stripe_use_mock,
+    )
 
     # ========================================================================
     # Webhooks Endpoints
@@ -104,6 +120,114 @@ def create_app(cfg: Optional[Settings] = None) -> FastAPI:
     def list_webhook_events(limit: int = Query(25, ge=1, le=100)):
         """Retrieve recent webhook events received and processed."""
         return ledger.get_recent_webhook_events(limit=limit)
+
+    # ========================================================================
+    # Stripe Multi-Gateway Payment Checkout Endpoints
+    # ========================================================================
+
+    @app.post("/api/invoices/{identifier}/checkout-session", response_model=StripeCheckoutSession, tags=["Stripe Checkout"])
+    def create_stripe_checkout_session(
+        identifier: str,
+        success_url: Optional[str] = Query(None),
+        cancel_url: Optional[str] = Query(None),
+    ):
+        """
+        Create a customer-facing Stripe Checkout Session for an open invoice.
+        Supports Credit Cards, Apple Pay, Google Pay, and US Bank Account (ACH).
+        """
+        inv = (
+            ledger.get_invoice_by_id(identifier)
+            or ledger.get_invoice_by_doc_number(identifier)
+            or ledger.get_invoice_by_order_id(identifier)
+        )
+        if not inv:
+            raise HTTPException(status_code=404, detail=f"Invoice '{identifier}' not found")
+
+        session = stripe_engine.create_checkout_session(
+            invoice=inv,
+            success_url=success_url,
+            cancel_url=cancel_url,
+        )
+        return session
+
+    @app.post("/api/webhooks/stripe", tags=["Stripe Checkout"])
+    async def stripe_webhook_receiver(
+        request: Request,
+        stripe_signature: Optional[str] = Header(None, alias="stripe-signature"),
+    ):
+        """
+        Cryptographically verified Stripe Webhook receiver.
+        Validates HMAC-SHA256 signature and auto-settles payment into QuickBooks Online and SQLite ledger.
+        """
+        body_bytes = await request.body()
+        if not stripe_signature:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing stripe-signature header")
+
+        if not stripe_engine.verify_webhook_signature(body_bytes, stripe_signature):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Stripe webhook cryptographic signature")
+
+        try:
+            event_dict = json.loads(body_bytes.decode("utf-8"))
+        except Exception as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid JSON payload: {e}")
+
+        result = stripe_engine.process_webhook_event(
+            event_dict=event_dict,
+            ledger=ledger,
+            payment_tracker=tracker,
+            qbo_client=client,
+        )
+        return JSONResponse(status_code=status.HTTP_200_OK, content=result.model_dump(mode="json"))
+
+    @app.post("/api/pay/simulate", tags=["Stripe Checkout"])
+    def simulate_stripe_payment_endpoint(req: StripeSimulateRequest):
+        """
+        Simulate an incoming Stripe payment webhook and settlement for an invoice.
+        Useful for testing, interactive UI checkout, and instant ledger reconciliation.
+        """
+        inv = (
+            ledger.get_invoice_by_id(req.invoice_id)
+            or ledger.get_invoice_by_doc_number(req.invoice_id)
+            or ledger.get_invoice_by_order_id(req.invoice_id)
+        )
+        if not inv:
+            raise HTTPException(status_code=404, detail=f"Invoice '{req.invoice_id}' not found")
+
+        pay_amount = Decimal(str(req.amount)) if req.amount is not None else inv.balance_due
+        if pay_amount <= Decimal("0.00"):
+            pay_amount = inv.total_amount
+
+        cents = int(pay_amount * 100)
+        pm_type = "us_bank_account" if (req.payment_method or "").upper() == "ACH" else "card"
+
+        mock_event = {
+            "id": f"evt_sim_{uuid4().hex[:12]}",
+            "object": "event",
+            "type": "checkout.session.completed",
+            "created": int(time.time()),
+            "data": {
+                "object": {
+                    "id": f"cs_sim_{uuid4().hex[:16]}",
+                    "payment_intent": f"pi_sim_{uuid4().hex[:16]}",
+                    "amount_total": cents,
+                    "currency": inv.currency.lower(),
+                    "payment_status": "paid",
+                    "payment_method_types": [pm_type],
+                    "metadata": {
+                        "qbo_invoice_id": inv.qbo_invoice_id,
+                        "doc_number": inv.doc_number,
+                    },
+                }
+            },
+        }
+
+        result = stripe_engine.process_webhook_event(
+            event_dict=mock_event,
+            ledger=ledger,
+            payment_tracker=tracker,
+            qbo_client=client,
+        )
+        return result.model_dump(mode="json")
 
     # ========================================================================
     # Dunning & Aging Schedule Endpoints
@@ -258,6 +382,368 @@ def create_app(cfg: Optional[Settings] = None) -> FastAPI:
         return InvoiceRenderer.render_html(inv)
 
     # ========================================================================
+    # Hosted Customer Payment Portal Pages
+    # ========================================================================
+
+    @app.get("/pay/{identifier}", response_class=HTMLResponse, tags=["Stripe Checkout"])
+    def customer_payment_portal(identifier: str):
+        """Customer-facing self-service invoice payment portal."""
+        inv = (
+            ledger.get_invoice_by_id(identifier)
+            or ledger.get_invoice_by_doc_number(identifier)
+            or ledger.get_invoice_by_order_id(identifier)
+        )
+        if not inv:
+            return HTMLResponse(
+                status_code=404,
+                content=f"""<!DOCTYPE html>
+<html>
+<head><title>Invoice Not Found</title><script src="https://cdn.tailwindcss.com"></script></head>
+<body class="bg-slate-50 flex items-center justify-center min-h-screen p-4 font-sans text-slate-800">
+  <div class="bg-white p-8 rounded-xl shadow-md max-w-md w-full text-center border border-slate-200">
+    <div class="w-12 h-12 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mx-auto mb-4 font-bold text-xl">!</div>
+    <h1 class="text-xl font-bold mb-2">Invoice Not Found</h1>
+    <p class="text-sm text-slate-500 mb-6">Could not locate invoice reference: <code class="font-mono text-slate-700">{identifier}</code></p>
+    <a href="/" class="text-sm text-indigo-600 hover:underline">Return to Dashboard</a>
+  </div>
+</body>
+</html>""",
+            )
+
+        is_paid = inv.balance_due <= Decimal("0.00") or inv.payment_status == PaymentStatus.PAID
+        badge_cls = "bg-emerald-100 text-emerald-800 border-emerald-300" if is_paid else "bg-amber-100 text-amber-800 border-amber-300"
+        status_text = "PAID IN FULL" if is_paid else inv.payment_status.value
+
+        checkout_card = ""
+        if is_paid:
+            checkout_card = f"""
+            <div class="p-6 bg-emerald-50 rounded-xl border border-emerald-200 text-center">
+                <div class="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-3">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                </div>
+                <h3 class="text-lg font-bold text-emerald-900">Invoice Fully Settled</h3>
+                <p class="text-sm text-emerald-700 mt-1">Thank you! No further balance is outstanding for this invoice.</p>
+                <div class="mt-5 flex justify-center gap-3">
+                    <a href="/api/invoices/{inv.doc_number}/html" target="_blank" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-semibold shadow transition">View Invoice Receipt</a>
+                    <a href="/" class="px-4 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-sm font-semibold transition">Back to Dashboard</a>
+                </div>
+            </div>
+            """
+        else:
+            checkout_card = f"""
+            <div class="space-y-6">
+                <div class="border border-slate-200 rounded-xl p-5 bg-slate-50">
+                    <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wider mb-3">Select Payment Method</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <label class="flex items-center p-3.5 bg-white border border-indigo-200 rounded-lg shadow-xs cursor-pointer hover:border-indigo-500 transition">
+                            <input type="radio" name="payment_channel" value="card" checked class="text-indigo-600 focus:ring-indigo-500 h-4 w-4">
+                            <div class="ml-3">
+                                <span class="block text-sm font-semibold text-slate-900">Credit or Debit Card</span>
+                                <span class="block text-xs text-slate-500">Visa, Mastercard, Amex, Apple Pay, Google Pay</span>
+                            </div>
+                        </label>
+                        <label class="flex items-center p-3.5 bg-white border border-slate-200 rounded-lg shadow-xs cursor-pointer hover:border-indigo-500 transition">
+                            <input type="radio" name="payment_channel" value="ach" class="text-indigo-600 focus:ring-indigo-500 h-4 w-4">
+                            <div class="ml-3">
+                                <span class="block text-sm font-semibold text-slate-900">US Bank Account (ACH)</span>
+                                <span class="block text-xs text-slate-500">Direct debit transfer (0.8% capped fee)</span>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="flex flex-col sm:flex-row gap-3">
+                    <button onclick="startCheckout()" id="checkoutBtn" class="flex-1 py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-bold shadow-md transition flex items-center justify-center gap-2 cursor-pointer">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"></path></svg>
+                        Proceed to Stripe Checkout (${inv.balance_due:.2f})
+                    </button>
+                    <button onclick="instantSettle()" id="instantBtn" class="py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold shadow-md transition flex items-center justify-center gap-2 cursor-pointer">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                        1-Click Test Settle
+                    </button>
+                </div>
+
+                <div class="text-center text-xs text-slate-400 flex items-center justify-center gap-1.5">
+                    <svg class="w-3.5 h-3.5 text-slate-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"></path></svg>
+                    <span>256-Bit SSL Encrypted &amp; Reconciled with QuickBooks Online</span>
+                </div>
+            </div>
+            """
+
+        portal_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Customer Payment Portal — Invoice {inv.doc_number}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 font-sans text-slate-800 min-h-screen">
+    <!-- Navigation Bar -->
+    <header class="bg-white border-b border-slate-200">
+        <div class="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="w-9 h-9 bg-indigo-600 text-white rounded-lg flex items-center justify-center font-bold text-lg">Q</div>
+                <div>
+                    <h1 class="text-base font-bold text-slate-900">{app_config.company_name}</h1>
+                    <p class="text-xs text-slate-500">Customer Payment &amp; Accounting Portal</p>
+                </div>
+            </div>
+            <div class="flex items-center space-x-2">
+                <a href="/api/invoices/{inv.doc_number}/html" target="_blank" class="text-xs font-semibold text-slate-600 hover:text-indigo-600 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg transition">View Invoice HTML</a>
+                <a href="/" class="text-xs font-semibold text-indigo-600 hover:underline px-2">Dashboard</a>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-4xl mx-auto px-4 py-8">
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+            <!-- Header Summary Banner -->
+            <div class="p-6 md:p-8 bg-gradient-to-r from-slate-900 to-indigo-950 text-white flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                    <div class="flex items-center gap-2 mb-1">
+                        <span class="text-xs uppercase tracking-wider font-semibold text-indigo-300">Invoice Statement</span>
+                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold border {badge_cls}">{status_text}</span>
+                    </div>
+                    <h2 class="text-2xl font-black">{inv.doc_number}</h2>
+                    <p class="text-xs text-slate-300 mt-1">Billed to: <span class="font-semibold text-white">{inv.customer_name}</span> ({inv.customer_email})</p>
+                </div>
+                <div class="text-left md:text-right">
+                    <div class="text-xs text-slate-300 uppercase tracking-wider">Balance Due</div>
+                    <div class="text-3xl font-black text-indigo-400 mt-0.5">${inv.balance_due:.2f} <span class="text-xs font-normal text-slate-300">{inv.currency}</span></div>
+                    <div class="text-xs text-slate-400 mt-1">Due Date: {inv.due_date or 'Due Upon Receipt'}</div>
+                </div>
+            </div>
+
+            <!-- Invoice Details Grid -->
+            <div class="p-6 md:p-8">
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 pb-6 border-b border-slate-100 text-sm">
+                    <div>
+                        <div class="text-xs text-slate-400">Transaction Date</div>
+                        <div class="font-semibold text-slate-700 mt-0.5">{inv.txn_date}</div>
+                    </div>
+                    <div>
+                        <div class="text-xs text-slate-400">Order Reference</div>
+                        <div class="font-mono text-slate-700 mt-0.5">{inv.order_id or 'N/A'}</div>
+                    </div>
+                    <div>
+                        <div class="text-xs text-slate-400">QuickBooks ID</div>
+                        <div class="font-mono text-slate-700 mt-0.5">{inv.qbo_invoice_id}</div>
+                    </div>
+                    <div>
+                        <div class="text-xs text-slate-400">Total Invoiced</div>
+                        <div class="font-semibold text-slate-900 mt-0.5">${inv.total_amount:.2f}</div>
+                    </div>
+                </div>
+
+                <!-- Payment Action Card -->
+                <div class="mt-6">
+                    {checkout_card}
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        async function startCheckout() {{
+            const btn = document.getElementById('checkoutBtn');
+            btn.disabled = true;
+            btn.innerText = 'Creating Checkout Session...';
+            try {{
+                const res = await fetch('/api/invoices/{inv.qbo_invoice_id}/checkout-session', {{method: 'POST'}});
+                if (!res.ok) throw new Error(await res.text());
+                const session = await res.json();
+                window.location.href = session.checkout_url;
+            }} catch (err) {{
+                alert('Error launching Stripe Checkout: ' + err);
+                btn.disabled = false;
+                btn.innerText = 'Proceed to Stripe Checkout (${inv.balance_due:.2f})';
+            }}
+        }}
+
+        async function instantSettle() {{
+            const btn = document.getElementById('instantBtn');
+            btn.disabled = true;
+            btn.innerText = 'Settling Payment...';
+            try {{
+                const channel = document.querySelector('input[name="payment_channel"]:checked')?.value || 'card';
+                const method = channel === 'ach' ? 'ACH' : 'CreditCard';
+                const res = await fetch('/api/pay/simulate', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify({{invoice_id: '{inv.qbo_invoice_id}', payment_method: method}})
+                }});
+                const data = await res.json();
+                if (data.success) {{
+                    window.location.href = '/pay/success/{inv.qbo_invoice_id}?amount=' + data.amount_paid;
+                }} else {{
+                    alert('Settlement failed: ' + data.message);
+                    btn.disabled = false;
+                    btn.innerText = '1-Click Test Settle';
+                }}
+            }} catch (err) {{
+                alert('Error: ' + err);
+                btn.disabled = false;
+                btn.innerText = '1-Click Test Settle';
+            }}
+        }}
+    </script>
+</body>
+</html>"""
+        return HTMLResponse(content=portal_html)
+
+    @app.get("/pay/checkout/{session_id}", response_class=HTMLResponse, tags=["Stripe Checkout"])
+    def mock_stripe_checkout_page(session_id: str):
+        """Hosted Stripe Checkout simulation page for sandbox test environments."""
+        session = stripe_engine.get_checkout_session(session_id)
+        if not session:
+            return HTMLResponse(status_code=404, content="<h1>Stripe Checkout Session Expired or Not Found</h1>")
+
+        checkout_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stripe Checkout Sandbox — {session.doc_number}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 min-h-screen flex items-center justify-center p-4 font-sans">
+    <div class="bg-white rounded-2xl shadow-xl max-w-2xl w-full overflow-hidden border border-slate-200 grid grid-cols-1 md:grid-cols-2">
+        <!-- Left: Summary -->
+        <div class="bg-slate-900 text-white p-6 md:p-8 flex flex-col justify-between">
+            <div>
+                <div class="inline-flex items-center px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 text-xs font-semibold mb-4">
+                    STRIPE TESTMODE SANDBOX
+                </div>
+                <div class="text-xs text-slate-400">Pay {app_config.company_name}</div>
+                <div class="text-3xl font-black text-white mt-1">${session.amount_total:.2f}</div>
+                <div class="text-xs text-slate-400 mt-4 border-t border-slate-800 pt-4">
+                    <div>Invoice: <strong class="text-slate-200 font-mono">{session.doc_number}</strong></div>
+                    <div class="mt-1">Customer: <strong class="text-slate-200">{session.customer_name or 'N/A'}</strong></div>
+                    <div class="mt-1">Email: <span class="text-slate-300 font-mono text-xs">{session.customer_email or 'N/A'}</span></div>
+                </div>
+            </div>
+            <div class="mt-8 text-xs text-slate-500">
+                Simulated Stripe Checkout Session: <span class="font-mono text-slate-400">{session.session_id}</span>
+            </div>
+        </div>
+
+        <!-- Right: Form -->
+        <div class="p-6 md:p-8 flex flex-col justify-between">
+            <div>
+                <h3 class="text-base font-bold text-slate-900 mb-4">Payment Information</h3>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 mb-1">Card Number</label>
+                        <input type="text" value="4242 &bull;&bull;&bull;&bull; &bull;&bull;&bull;&bull; 4242" readonly class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-mono text-slate-700">
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-600 mb-1">Expiration</label>
+                            <input type="text" value="12 / 28" readonly class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-mono text-slate-700">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-600 mb-1">CVC</label>
+                            <input type="text" value="888" readonly class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-mono text-slate-700">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 mb-1">Name on Card</label>
+                        <input type="text" value="{session.customer_name or 'Authorized Signer'}" readonly class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700">
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-6">
+                <button onclick="submitPayment()" id="payBtn" class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-sm shadow transition flex items-center justify-center gap-2 cursor-pointer">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                    Authorize Payment (${session.amount_total:.2f})
+                </button>
+                <div class="text-center mt-3">
+                    <a href="{session.cancel_url}" class="text-xs text-slate-500 hover:underline">Cancel and return</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function submitPayment() {{
+            const btn = document.getElementById('payBtn');
+            btn.disabled = true;
+            btn.innerText = 'Processing Authorization...';
+            try {{
+                const res = await fetch('/api/pay/simulate', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify({{invoice_id: '{session.qbo_invoice_id}', amount: {float(session.amount_total)}}})
+                }});
+                const data = await res.json();
+                if (data.success) {{
+                    window.location.href = '{session.success_url}';
+                }} else {{
+                    alert('Error: ' + data.message);
+                    btn.disabled = false;
+                    btn.innerText = 'Authorize Payment';
+                }}
+            }} catch (err) {{
+                alert('Authorization failed: ' + err);
+                btn.disabled = false;
+                btn.innerText = 'Authorize Payment';
+            }}
+        }}
+    </script>
+</body>
+</html>"""
+        return HTMLResponse(content=checkout_html)
+
+    @app.get("/pay/success/{identifier}", response_class=HTMLResponse, tags=["Stripe Checkout"])
+    def payment_success_page(identifier: str, amount: Optional[float] = Query(None)):
+        """Customer payment confirmation and receipt acknowledgment page."""
+        inv = (
+            ledger.get_invoice_by_id(identifier)
+            or ledger.get_invoice_by_doc_number(identifier)
+            or ledger.get_invoice_by_order_id(identifier)
+        )
+        doc_num = inv.doc_number if inv else identifier
+        cust_name = inv.customer_name if inv else "Valued Customer"
+        paid_amt = f"${amount:.2f}" if amount else (f"${inv.total_amount:.2f}" if inv else "$0.00")
+        bal_due = f"${inv.balance_due:.2f}" if inv else "$0.00"
+
+        success_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Payment Successful — Invoice {doc_num}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 min-h-screen flex items-center justify-center p-4 font-sans text-slate-800">
+    <div class="bg-white rounded-2xl shadow-md border border-slate-200 max-w-md w-full p-8 text-center">
+        <div class="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4">
+            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"></path></svg>
+        </div>
+        <h1 class="text-2xl font-black text-slate-900 mb-1">Payment Successful!</h1>
+        <p class="text-xs text-slate-500 mb-6">Your transaction has been processed and automatically reconciled with QuickBooks Online.</p>
+
+        <div class="bg-slate-50 rounded-xl p-4 border border-slate-100 text-left text-sm space-y-2.5 mb-6">
+            <div class="flex justify-between"><span class="text-slate-500">Invoice:</span> <strong class="font-mono text-slate-800">{doc_num}</strong></div>
+            <div class="flex justify-between"><span class="text-slate-500">Customer:</span> <span class="font-semibold text-slate-800">{cust_name}</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">Amount Paid:</span> <span class="font-bold text-emerald-600">{paid_amt}</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">Remaining Balance:</span> <span class="font-mono text-slate-800">{bal_due}</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">QBO Status:</span> <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-emerald-100 text-emerald-800">RECONCILED</span></div>
+        </div>
+
+        <div class="space-y-2">
+            <a href="/api/invoices/{doc_num}/html" target="_blank" class="block w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-semibold shadow transition">View Invoice Receipt</a>
+            <a href="/pay/{identifier}" class="block w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-sm font-semibold transition">Back to Portal</a>
+            <a href="/" class="block text-xs text-slate-400 hover:underline pt-2">Return to Dashboard</a>
+        </div>
+    </div>
+</body>
+</html>"""
+        return HTMLResponse(content=success_html)
+
+    # ========================================================================
     # Interactive Web Dashboard
     # ========================================================================
 
@@ -292,11 +778,15 @@ def create_app(cfg: Optional[Settings] = None) -> FastAPI:
                 <td class="py-3 px-4 text-center">
                     <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border {badge_color}">{inv.payment_status.value}</span>
                 </td>
+                <td class="py-3 px-4 text-center space-x-1">
+                    <a href="/pay/{inv.qbo_invoice_id}" target="_blank" class="inline-flex items-center px-2 py-1 rounded text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white transition shadow-xs">Pay Portal</a>
+                    <a href="/api/invoices/{inv.doc_number}/html" target="_blank" class="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 transition">HTML</a>
+                </td>
             </tr>
             """
 
         if not invoices:
-            rows_html = """<tr><td colspan="8" class="text-center py-12 text-slate-400">No invoices generated yet. Use the CLI or API to create one!</td></tr>"""
+            rows_html = """<tr><td colspan="9" class="text-center py-12 text-slate-400">No invoices generated yet. Use the CLI or API to create one!</td></tr>"""
 
         # Dunning rows
         dunning_rows = ""
@@ -462,6 +952,7 @@ def create_app(cfg: Optional[Settings] = None) -> FastAPI:
                             <th class="py-3 px-4 text-right">Total</th>
                             <th class="py-3 px-4 text-right">Balance</th>
                             <th class="py-3 px-4 text-center">Status</th>
+                            <th class="py-3 px-4 text-center">Actions</th>
                         </tr>
                     </thead>
                     <tbody>

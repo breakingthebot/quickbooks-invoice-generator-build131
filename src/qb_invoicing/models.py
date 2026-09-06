@@ -300,3 +300,32 @@ class DunningBatchResult(BaseModel):
     current_count: int = 0
     notices: List[DunningNoticeRecord] = Field(default_factory=list)
 
+
+class StripeCheckoutSession(BaseModel):
+    """Stripe checkout session details for customer self-service payment."""
+    session_id: str
+    qbo_invoice_id: str
+    doc_number: str
+    customer_email: Optional[str] = None
+    customer_name: Optional[str] = None
+    amount_total: Decimal
+    currency: str = "usd"
+    payment_status: str = "unpaid"  # unpaid, paid
+    checkout_url: str
+    success_url: str
+    cancel_url: str
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class StripePaymentIntentResult(BaseModel):
+    """Result of an auto-settled Stripe payment."""
+    success: bool
+    invoice_id: str
+    doc_number: str
+    amount_paid: Decimal
+    new_balance: Decimal
+    payment_status: PaymentStatus
+    qbo_payment_id: Optional[str] = None
+    message: str
+
+

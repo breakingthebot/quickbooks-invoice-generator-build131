@@ -44,6 +44,11 @@ class Settings(BaseModel):
     company_phone: str = Field(default="+1 (800) 555-0199")
     payment_portal_url: str = Field(default="https://pay.example.com/invoices")
 
+    # Stripe Gateway Settings
+    stripe_api_key: str = Field(default="")
+    stripe_webhook_secret: str = Field(default="whsec_sample_secret_key_8899")
+    stripe_use_mock: bool = Field(default=True)
+
     @property
     def base_url(self) -> str:
         """Returns the appropriate API base URL."""
@@ -89,6 +94,10 @@ class Settings(BaseModel):
         company_phone = os.getenv("COMPANY_PHONE", "+1 (800) 555-0199")
         portal_url = os.getenv("PAYMENT_PORTAL_URL", "https://pay.example.com/invoices")
 
+        stripe_api_key = os.getenv("STRIPE_API_KEY", "")
+        stripe_webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET", "whsec_sample_secret_key_8899")
+        stripe_use_mock = os.getenv("STRIPE_USE_MOCK", "true").lower() in ("1", "true", "yes")
+
         return cls(
             use_mock=use_mock,
             environment=env,
@@ -107,6 +116,9 @@ class Settings(BaseModel):
             company_email=company_email,
             company_phone=company_phone,
             payment_portal_url=portal_url,
+            stripe_api_key=stripe_api_key,
+            stripe_webhook_secret=stripe_webhook_secret,
+            stripe_use_mock=stripe_use_mock,
         )
 
 
