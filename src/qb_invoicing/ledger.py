@@ -17,6 +17,7 @@ from qb_invoicing.models import (
     AgingScheduleReport,
     DunningLevel,
     DunningNoticeRecord,
+    EmailDispatchRecord,
     FinancialMetrics,
     InvoiceRecord,
     OrderData,
@@ -148,6 +149,22 @@ class LedgerRepository:
                 )
             """)
 
+            # Email dispatches audit log table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS email_dispatches (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    invoice_id TEXT NOT NULL,
+                    doc_number TEXT NOT NULL,
+                    recipient_email TEXT NOT NULL,
+                    subject TEXT NOT NULL,
+                    sent_at TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'SENT',
+                    has_attachment INTEGER NOT NULL DEFAULT 1,
+                    error_message TEXT,
+                    created_at TEXT NOT NULL
+                )
+            """)
+
             # Indexes for high performance
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices (payment_status)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_invoices_doc_number ON invoices (doc_number)")
@@ -156,6 +173,8 @@ class LedgerRepository:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_webhook_events_id ON webhook_events (event_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_dunning_invoice ON dunning_history (invoice_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_dunning_sent_at ON dunning_history (sent_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_email_dispatches_invoice ON email_dispatches (invoice_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_email_dispatches_sent_at ON email_dispatches (sent_at)")
             conn.commit()
 
     def save_order(self, order: OrderData) -> None:
@@ -181,6 +200,20 @@ class LedgerRepository:
                 ),
             )
             conn.commit()
+
+    def get_order(self, order_id: str) -> Optional[OrderData]:
+        """Retrieve stored order by order_id."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT raw_json FROM orders WHERE order_id = ?",
+                (order_id,),
+            ).fetchone()
+            if not row:
+                return None
+            try:
+                return OrderData.model_validate_json(row["raw_json"])
+            except Exception:
+                return None
 
     def save_invoice(self, record: InvoiceRecord) -> InvoiceRecord:
         """Insert or update an invoice tracking record."""
@@ -674,3 +707,67 @@ class LedgerRepository:
             raw_payload=r["raw_payload"],
             raw_response=r["raw_response"],
         )
+
+    def record_email_dispatch(self, dispatch: EmailDispatchRecord) -> int:
+        """Record an invoice email dispatch in the audit ledger."""
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO email_dispatches (
+                    invoice_id, doc_number, recipient_email, subject,
+                    sent_at, status, has_attachment, error_message, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    dispatch.invoice_id,
+                    dispatch.doc_number,
+                    dispatch.recipient_email,
+                    dispatch.subject,
+                    dispatch.sent_at.isoformat(),
+                    dispatch.status,
+                    1 if dispatch.has_attachment else 0,
+                    dispatch.error_message,
+                    dispatch.created_at.isoformat(),
+                ),
+            )
+            conn.commit()
+            return cursor.lastrowid or 0
+
+    def get_email_dispatches(self, invoice_id: Optional[str] = None, limit: int = 50) -> List[EmailDispatchRecord]:
+        """Fetch email dispatch audit logs, optionally filtered by invoice_id."""
+        with self._get_connection() as conn:
+            if invoice_id:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM email_dispatches
+                    WHERE invoice_id = ?
+                    ORDER BY sent_at DESC, id DESC
+                    LIMIT ?
+                    """,
+                    (invoice_id, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM email_dispatches
+                    ORDER BY sent_at DESC, id DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
+
+            return [
+                EmailDispatchRecord(
+                    id=r["id"],
+                    invoice_id=r["invoice_id"],
+                    doc_number=r["doc_number"],
+                    recipient_email=r["recipient_email"],
+                    subject=r["subject"],
+                    sent_at=datetime.fromisoformat(r["sent_at"]),
+                    status=r["status"],
+                    has_attachment=bool(r["has_attachment"]),
+                    error_message=r["error_message"],
+                    created_at=datetime.fromisoformat(r["created_at"]),
+                )
+                for r in rows
+            ]

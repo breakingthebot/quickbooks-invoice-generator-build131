@@ -18,10 +18,31 @@ This document logs every incremental engineering iteration and git commit pushed
 | **04** | [`9802fe1`](https://github.com/breakingthebot/quickbooks-invoice-generator-build131/commit/9802fe1) | `v1.3.0` | **Vercel-Ready Next.js 14 Web Application**<br>Full-featured Next.js 14 (App Router) + React 18 + TypeScript + Tailwind CSS web portal in `web/` configured for 1-click Vercel deployment (`vercel.json`), interactive Invoice Creation wizard modal, one-click Payment Settlement modal, Accounts Receivable Aging schedule visual cards, automated Dunning Escalation trigger, live audit feeds, and backend FastAPI CORS middleware. | 43 / 43 + Next.js build | [Iteration 04 Summary](docs/summaries/iteration_04_summary.md) |
 | **05** | [`a4a06a0`](https://github.com/breakingthebot/quickbooks-invoice-generator-build131/commit/a4a06a0) | `v1.4.0` | **Native Android Mobile Application (Kotlin & Jetpack Compose)**<br>Enterprise Android mobile client in `android/` built with Kotlin 2.0.21, Jetpack Compose, Material 3, and Retrofit 2. Features real-time Financial KPI cards, Accounts Receivable Aging Schedule card scroll, status-filtered Invoice Ledger, dynamic "Record Payment" settlement dialog, full-featured "Create QBO Invoice" wizard with line items repeater and live math calculations, Dunning notices and Webhook activity feeds, dynamic server URL switcher, and standalone Gradle test suite. | 43 / 43 Pytest + 4 / 4 Android | [Iteration 05 Summary](docs/summaries/iteration_05_summary.md) |
 | **06** | [`8b9c941`](https://github.com/breakingthebot/quickbooks-invoice-generator-build131/commit/8b9c941) | `v1.5.0` | **Multi-Gateway Payment Checkout & Stripe / ACH Auto-Settlement Engine**<br>Customer-facing Stripe Checkout session generator, hosted payment portal (`/pay`), cryptographic Stripe HMAC-SHA256 webhook listener (`POST /api/webhooks/stripe`), automatic reconciliation into QBO Payment entities and SQLite ledger, CLI commands (`checkout`, `simulate-stripe-payment`), and dunning email portal link integration. | 59 / 59 | [Iteration 06 Summary](docs/summaries/iteration_06_summary.md) |
+| **07** | [`1eacb5e`](https://github.com/breakingthebot/quickbooks-invoice-generator-build131/commit/1eacb5e) | `v1.6.0` | **Vector PDF Generation with Instant QR Payment Codes & Email Dispatch Engine**<br>Audit-compliant vector PDF invoices via ReportLab, mobile-scannable instant payment QR codes routing directly to hosted payment portals, SMTP/mock email dispatch engine with PDF attachments, SQLite `email_dispatches` audit trail, REST API endpoints (`/pdf`, `/qr`, `/send-email`, `/dispatches`), and CLI commands (`export-pdf`, `send-invoice`). | 80 / 80 | [Iteration 07 Summary](docs/summaries/iteration_07_summary.md) |
 
 ---
 
 ## Chronological Iteration Entries
+
+### Iteration 7: Vector PDF Generation with Instant QR Payment Codes & Email Dispatch Engine
+- **Git Commit**: [`1eacb5e`](https://github.com/breakingthebot/quickbooks-invoice-generator-build131/commit/1eacb5e)
+- **Tag / Version**: `v1.6.0`
+- **Date**: 2026-09-05
+- **Plain English Summary**:
+  Architected and implemented a high-resolution, vector PDF invoice generation engine with pure-vector scannable payment QR codes and a dual-mode SMTP/Mock email dispatch system. Built using ReportLab, the PDF engine renders audit-compliant corporate invoices with clean typography, itemized line item tables, customer billing details, and prominent financial breakdown summaries. Every invoice features an embedded, high-contrast QR code routing directly to the self-service hosted payment checkout portal (`/pay/{qbo_invoice_id}`), enabling customers reading desktop or printed invoices to pay with their smartphones in seconds via Apple Pay, Google Pay, Card, or ACH. Built an email dispatch engine (`src/qb_invoicing/mailer.py`) supporting MIME multipart messages, PDF attachments, STARTTLS encryption, and offline sandbox simulation (`MAIL_USE_MOCK=true`). Enhanced the web dashboard (`/`) and hosted portal (`/pay/{id}`) with direct "Download PDF" and "Email PDF" triggers, exposed REST endpoints (`/pdf`, `/qr`, `/send-email`, `/dispatches`), and added CLI commands (`export-pdf`, `send-invoice`).
+- **Key Files Introduced / Modified**:
+  - `src/qb_invoicing/pdf_generator.py`: Core vector PDF invoice renderer and scannable QR code generator.
+  - `src/qb_invoicing/mailer.py`: SMTP/mock email dispatch engine with MIME multipart formatting and PDF attachment handling.
+  - `src/qb_invoicing/models.py`: Added `EmailDispatchRecord` model.
+  - `src/qb_invoicing/config.py`: Added SMTP and mailer configuration fields (`mail_use_mock`, `smtp_host`, `smtp_port`, `smtp_user`, `smtp_password`, `smtp_use_tls`, `mail_from`).
+  - `src/qb_invoicing/ledger.py`: Added `email_dispatches` table, `record_email_dispatch`, `get_email_dispatches`, and `get_order`.
+  - `src/qb_invoicing/api.py`: Added `/api/invoices/{id}/pdf`, `/api/invoices/{id}/qr`, `/api/invoices/{id}/send-email`, `/api/invoices/{id}/dispatches`, and enhanced portal & dashboard views.
+  - `src/qb_invoicing/cli.py`: Added `export-pdf` and `send-invoice` commands.
+  - `tests/test_pdf_mailer.py`: 21 comprehensive unit & integration tests covering QR codes, vector PDFs across all statuses, mock mailer, live SMTP error handling, REST endpoints, and CLI commands.
+  - `docs/summaries/iteration_07_summary.md`: Iteration 7 technical documentation.
+- **Test Results**: 80 / 80 Pytest unit and integration tests passing.
+
+---
 
 ### Iteration 6: Multi-Gateway Payment Checkout & Stripe / ACH Auto-Settlement Engine
 - **Git Commit**: [`8b9c941`](https://github.com/breakingthebot/quickbooks-invoice-generator-build131/commit/8b9c941)

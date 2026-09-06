@@ -1,7 +1,9 @@
 # QuickBooks Online Invoice Generator & Payment Status Tracker
 
 [![CI](https://github.com/breakingthebot/quickbooks-invoice-generator-build131/actions/workflows/ci.yml/badge.svg)](https://github.com/breakingthebot/quickbooks-invoice-generator-build131/actions/workflows/ci.yml)
-[![Version: 1.5.0](https://img.shields.io/badge/Version-1.5.0-brightgreen.svg)](https://github.com/breakingthebot/quickbooks-invoice-generator-build131)
+[![Version: 1.6.0](https://img.shields.io/badge/Version-1.6.0-brightgreen.svg)](https://github.com/breakingthebot/quickbooks-invoice-generator-build131)
+[![PDF](https://img.shields.io/badge/PDF-ReportLab%205.0-red?logo=adobeacrobatreader&logoColor=white)](https://www.reportlab.com/)
+[![QR Code](https://img.shields.io/badge/QR%20Code-Instant%20Pay-black)](https://github.com/lincolnloop/python-qrcode)
 [![Stripe](https://img.shields.io/badge/Payments-Stripe%20%7C%20ACH-635BFF?logo=stripe&logoColor=white)](https://stripe.com)
 [![Android](https://img.shields.io/badge/Android-Kotlin%202.0%20%7C%20Compose-3DDC84?logo=android&logoColor=white)](https://developer.android.com/)
 [![Next.js 14](https://img.shields.io/badge/Next.js-14.2%20App%20Router-black?logo=next.js)](https://nextjs.org/)
@@ -12,12 +14,15 @@
 [![Intuit QBO v3](https://img.shields.io/badge/QuickBooks-Accounting%20API%20v3-green.svg)](https://developer.intuit.com/)
 [![Code Style: Black](https://img.shields.io/badge/Code%20Style-Black-000000.svg)](https://github.com/psf/black)
 
-A production-ready QuickBooks Online (QBO) invoice generator, webhook ingestion engine, automated dunning escalation system, multi-gateway Stripe & ACH payment checkout engine, real-time payment reconciliation platform, and cross-platform enterprise ecosystem. Transforms multi-channel e-commerce, ERP, or consultation order data into Intuit QuickBooks Online Accounting API v3 invoices, manages customer synchronization, receives and cryptographically verifies QuickBooks Online webhooks (`intuit-signature`) and Stripe webhooks (`stripe-signature`) via HMAC-SHA256, categorizes outstanding receivables into aging schedule buckets, enforces dunning escalation ladders with frequency cooldown guards, maintains a local SQLite ledger with relational constraints, tracks payment lifecycles (`PENDING` -> `PARTIAL` -> `PAID`, `OVERDUE`, `VOIDED`), and provides:
-1. **Multi-Gateway Payment Checkout & Stripe / ACH Auto-Settlement Engine**: Self-service Stripe Checkout sessions, hosted payment portal (`/pay/{identifier}`), ACH bank debit, cryptographic webhook listeners, and automatic reconciliation into QBO Payment entities.
-2. **Native Android Mobile App (`android/`)**: Built in Kotlin 2.0 with Jetpack Compose & Material 3, providing real-time financial KPIs, AR Aging buckets, dynamic invoice generator wizard with line items repeater, instant payment settlement modal, and configurable backend endpoints.
-3. **Interactive Next.js 14 Web App (`web/`)**: A production-grade React 18, TypeScript, and Tailwind CSS single-page console built with the App Router, designed for seamless one-click Vercel deployment with dynamic invoice creation, payment recording, and real-time dunning escalation.
-4. **FastAPI REST API**: High-performance async REST backend with CORS support, OpenAPI documentation, and automated webhook routing.
-5. **Terminal CLI Suite (`qb-invoicing`)**: Complete operational CLI for batch processing, ledger inquiries, dunning runs, Stripe checkout links, and webhook simulations.
+A production-ready QuickBooks Online (QBO) invoice generator, webhook ingestion engine, automated dunning escalation system, multi-gateway Stripe & ACH payment checkout engine, vector PDF generator with embedded instant payment QR codes, email dispatch engine, real-time payment reconciliation platform, and cross-platform enterprise ecosystem. Transforms multi-channel e-commerce, ERP, or consultation order data into Intuit QuickBooks Online Accounting API v3 invoices, manages customer synchronization, receives and cryptographically verifies QuickBooks Online webhooks (`intuit-signature`) and Stripe webhooks (`stripe-signature`) via HMAC-SHA256, categorizes outstanding receivables into aging schedule buckets, enforces dunning escalation ladders with frequency cooldown guards, maintains a local SQLite ledger with relational constraints, tracks payment lifecycles (`PENDING` -> `PARTIAL` -> `PAID`, `OVERDUE`, `VOIDED`), and provides:
+1. **Vector PDF Generation Engine (`src/qb_invoicing/pdf_generator.py`)**: High-resolution vector PDF invoices via ReportLab with itemized line items, tax breakdowns, company branding, customer billing info, and audit-compliant statements.
+2. **Instant Mobile-Scannable Payment QR Codes**: Scannable matrix barcodes embedded on every PDF invoice routing smartphone users directly to the hosted payment checkout portal (`/pay/{id}`).
+3. **Invoice Email Dispatch Engine (`src/qb_invoicing/mailer.py`)**: MIME multipart email engine with vector PDF attachments, live STARTTLS SMTP support, zero-dependency sandbox mock testing (`MAIL_USE_MOCK=true`), and SQLite dispatch audit ledger.
+4. **Multi-Gateway Payment Checkout & Stripe / ACH Auto-Settlement Engine**: Self-service Stripe Checkout sessions, hosted payment portal (`/pay/{identifier}`), ACH bank debit, cryptographic webhook listeners, and automatic reconciliation into QBO Payment entities.
+5. **Native Android Mobile App (`android/`)**: Built in Kotlin 2.0 with Jetpack Compose & Material 3, providing real-time financial KPIs, AR Aging buckets, dynamic invoice generator wizard with line items repeater, instant payment settlement modal, and configurable backend endpoints.
+6. **Interactive Next.js 14 Web App (`web/`)**: A production-grade React 18, TypeScript, and Tailwind CSS single-page console built with the App Router, designed for seamless one-click Vercel deployment with dynamic invoice creation, payment recording, and real-time dunning escalation.
+7. **FastAPI REST API**: High-performance async REST backend with CORS support, OpenAPI documentation, and automated webhook routing.
+8. **Terminal CLI Suite (`qb-invoicing`)**: Complete operational CLI for batch processing, ledger inquiries, dunning runs, Stripe checkout links, PDF exports, and email dispatches.
 
 ---
 
@@ -57,6 +62,7 @@ erDiagram
     INVOICES ||--o{ SYNC_AUDIT_LOGS : "logs"
     WEBHOOK_EVENTS }o--|| INVOICES : "synchronizes"
     INVOICES ||--o{ DUNNING_HISTORY : "escalates"
+    INVOICES ||--o{ EMAIL_DISPATCHES : "dispatches"
 
     ORDERS {
         text order_id PK
@@ -127,6 +133,19 @@ erDiagram
         text sent_at
         text status
         text body_preview
+    }
+
+    EMAIL_DISPATCHES {
+        integer id PK
+        text invoice_id FK
+        text doc_number
+        text recipient_email
+        text subject
+        text sent_at
+        text status
+        integer has_attachment
+        text error_message
+        text created_at
     }
 
     SYNC_AUDIT_LOGS {
@@ -431,7 +450,14 @@ cp .env.example .env
 | `DUNNING_COOLDOWN_DAYS` | `7` | Days to suppress repeated escalation notices to same customer |
 | `COMPANY_NAME` | `Acme Enterprises LLC` | Business name displayed on dunning notices |
 | `COMPANY_EMAIL` | `billing@example.com` | Billing support email on dunning notices |
-| `PAYMENT_PORTAL_URL` | `https://pay.example.com/invoices` | Direct online payment link inserted into dunning notices |
+| `PAYMENT_PORTAL_URL` | `https://pay.example.com/invoices` | Direct online payment link inserted into dunning notices & QR codes |
+| `MAIL_USE_MOCK` | `true` | When `true`, email engine simulates delivery and records in SQLite without network traffic |
+| `SMTP_HOST` | `smtp.example.com` | Live SMTP server hostname |
+| `SMTP_PORT` | `587` | SMTP server port (587 for STARTTLS, 465 for SSL) |
+| `SMTP_USER` | `billing@example.com` | SMTP authentication username |
+| `SMTP_PASSWORD` | `...` | SMTP authentication password |
+| `SMTP_USE_TLS` | `true` | When `true`, establishes secure connection via STARTTLS |
+| `MAIL_FROM` | `billing@example.com` | Envelope sender email address for invoice dispatches |
 
 ---
 
@@ -442,7 +468,7 @@ The package provides the `qb-invoicing` executable CLI tool:
 ### 1. Check Version
 ```bash
 qb-invoicing --version
-# Outputs: qb-invoicing v1.5.0
+# Outputs: qb-invoicing v1.6.0
 ```
 
 ### 2. Initialize Database
@@ -539,6 +565,24 @@ qb-invoicing simulate-stripe-payment --invoice INV-2026-001 --method card
 
 # Settle partial amount with US Bank Account (ACH)
 qb-invoicing simulate-stripe-payment --invoice 1001 --amount 250.00 --method ach
+```
+
+### 18. Export Vector PDF Invoice with Scannable QR Code
+```bash
+# Export invoice PDF to default storage/exports/ directory
+qb-invoicing export-pdf --invoice INV-2026-001
+
+# Export to custom destination path with specific portal payment URL
+qb-invoicing export-pdf --invoice 1001 --output C:/Exports/MyInvoice.pdf --portal-url https://pay.example.com
+```
+
+### 19. Dispatch Invoice Email with PDF Attachment
+```bash
+# Dispatch in sandbox mock mode (audited to SQLite ledger)
+qb-invoicing send-invoice --invoice INV-2026-001 --mock
+
+# Send to explicit recipient with custom subject line via live SMTP
+qb-invoicing send-invoice --invoice 1001 --to client@enterprise.com --subject "Urgent: Q3 Billing Invoice" --no-mock
 ```
 
 ---

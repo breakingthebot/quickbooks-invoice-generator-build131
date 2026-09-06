@@ -329,3 +329,17 @@ class StripePaymentIntentResult(BaseModel):
     message: str
 
 
+class EmailDispatchRecord(BaseModel):
+    """Persistent audit record of an invoice email dispatch."""
+    id: Optional[int] = None
+    invoice_id: str
+    doc_number: str
+    recipient_email: str
+    subject: str
+    sent_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    status: str = "SENT"  # SENT, FAILED, SIMULATED
+    has_attachment: bool = True
+    error_message: Optional[str] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+

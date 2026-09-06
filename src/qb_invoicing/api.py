@@ -19,10 +19,12 @@ from qb_invoicing import __version__
 from qb_invoicing.config import Settings, settings
 from qb_invoicing.dunning import DunningEngine
 from qb_invoicing.ledger import LedgerRepository
+from qb_invoicing.mailer import InvoiceMailer
 from qb_invoicing.models import (
     AgingScheduleReport,
     DunningBatchResult,
     DunningNoticeRecord,
+    EmailDispatchRecord,
     FinancialMetrics,
     InvoiceRecord,
     OrderData,
@@ -32,6 +34,7 @@ from qb_invoicing.models import (
     StripePaymentIntentResult,
 )
 from qb_invoicing.payment_tracker import PaymentStatusTracker
+from qb_invoicing.pdf_generator import InvoicePDFGenerator, generate_payment_qr
 from qb_invoicing.qbo_client import QuickBooksClient
 from qb_invoicing.renderer import InvoiceRenderer
 from qb_invoicing.stripe_engine import StripeCheckoutEngine
@@ -43,6 +46,13 @@ class ManualPaymentRequest(BaseModel):
     amount: float
     payment_method: str = "CreditCard"
     reference_num: Optional[str] = None
+
+
+class SendEmailRequest(BaseModel):
+    recipient_email: Optional[str] = None
+    subject: Optional[str] = None
+    text_body: Optional[str] = None
+    html_body: Optional[str] = None
 
 
 class StripeSimulateRequest(BaseModel):
@@ -87,6 +97,8 @@ def create_app(cfg: Optional[Settings] = None) -> FastAPI:
         webhook_secret=app_config.stripe_webhook_secret,
         use_mock=app_config.stripe_use_mock,
     )
+    pdf_generator = InvoicePDFGenerator(app_config)
+    mailer = InvoiceMailer(settings=app_config, ledger=ledger, pdf_generator=pdf_generator)
 
     # ========================================================================
     # Webhooks Endpoints
@@ -381,6 +393,91 @@ def create_app(cfg: Optional[Settings] = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Invoice not found")
         return InvoiceRenderer.render_html(inv)
 
+    @app.get("/api/invoices/{identifier}/pdf", tags=["Invoices"])
+    def download_invoice_pdf(identifier: str):
+        """Stream audit-compliant vector PDF invoice with embedded payment QR code."""
+        inv = (
+            ledger.get_invoice_by_id(identifier)
+            or ledger.get_invoice_by_doc_number(identifier)
+            or ledger.get_invoice_by_order_id(identifier)
+        )
+        if not inv:
+            raise HTTPException(status_code=404, detail=f"Invoice '{identifier}' not found")
+
+        order = None
+        if inv.order_id:
+            order = ledger.get_order(inv.order_id)
+
+        pdf_bytes = pdf_generator.generate_pdf_bytes(inv, order=order)
+        filename = f"Invoice_{inv.doc_number}.pdf"
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'inline; filename="{filename}"',
+                "Content-Type": "application/pdf",
+            },
+        )
+
+    @app.get("/api/invoices/{identifier}/qr", tags=["Invoices"])
+    def get_invoice_qr(identifier: str):
+        """Generate dynamic, real-time payment QR code image (PNG) for mobile checkout."""
+        inv = (
+            ledger.get_invoice_by_id(identifier)
+            or ledger.get_invoice_by_doc_number(identifier)
+            or ledger.get_invoice_by_order_id(identifier)
+        )
+        if not inv:
+            raise HTTPException(status_code=404, detail=f"Invoice '{identifier}' not found")
+
+        portal = app_config.payment_portal_url.rstrip("/")
+        if "/pay" in portal:
+            pay_url = f"{portal}/{inv.qbo_invoice_id}"
+        else:
+            pay_url = f"{portal}/pay/{inv.qbo_invoice_id}"
+
+        qr_bytes = generate_payment_qr(pay_url, box_size=6, border=2)
+        return Response(content=qr_bytes, media_type="image/png")
+
+    @app.post("/api/invoices/{identifier}/send-email", tags=["Invoices"])
+    def send_invoice_email_endpoint(identifier: str, req: Optional[SendEmailRequest] = None):
+        """Dispatch invoice email with attached vector PDF via SMTP or sandbox mock."""
+        inv = (
+            ledger.get_invoice_by_id(identifier)
+            or ledger.get_invoice_by_doc_number(identifier)
+            or ledger.get_invoice_by_order_id(identifier)
+        )
+        if not inv:
+            raise HTTPException(status_code=404, detail=f"Invoice '{identifier}' not found")
+
+        r = req or SendEmailRequest()
+        try:
+            dispatch = mailer.send_invoice_email(
+                invoice=inv,
+                recipient_email=r.recipient_email,
+                subject=r.subject,
+                text_body=r.text_body,
+                html_body=r.html_body,
+            )
+            return {
+                "status": "SUCCESS",
+                "dispatch": dispatch.model_dump(mode="json"),
+            }
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to dispatch invoice email: {exc}")
+
+    @app.get("/api/invoices/{identifier}/dispatches", response_model=List[EmailDispatchRecord], tags=["Invoices"])
+    def get_invoice_email_dispatches(identifier: str):
+        """Retrieve audit history of emails dispatched for this invoice."""
+        inv = (
+            ledger.get_invoice_by_id(identifier)
+            or ledger.get_invoice_by_doc_number(identifier)
+            or ledger.get_invoice_by_order_id(identifier)
+        )
+        if not inv:
+            raise HTTPException(status_code=404, detail=f"Invoice '{identifier}' not found")
+        return ledger.get_email_dispatches(invoice_id=inv.qbo_invoice_id)
+
     # ========================================================================
     # Hosted Customer Payment Portal Pages
     # ========================================================================
@@ -536,6 +633,27 @@ def create_app(cfg: Optional[Settings] = None) -> FastAPI:
                     </div>
                 </div>
 
+                <!-- PDF Export & Mobile Payment QR Code -->
+                <div class="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 bg-slate-50 border border-slate-200 rounded-xl mt-6">
+                    <div class="flex items-center gap-3">
+                        <img src="/api/invoices/{inv.qbo_invoice_id}/qr" alt="Payment QR Code" class="w-16 h-16 rounded border border-slate-300 bg-white p-1 shadow-xs" />
+                        <div>
+                            <div class="text-xs font-bold text-slate-800">Scan QR Code to Pay on Mobile</div>
+                            <div class="text-xs text-slate-500">Scan with your smartphone camera to open instant checkout.</div>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2 w-full sm:w-auto">
+                        <a href="/api/invoices/{inv.qbo_invoice_id}/pdf" target="_blank" class="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-rose-600 hover:bg-rose-700 text-white shadow-xs transition">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                            Download PDF
+                        </a>
+                        <button onclick="dispatchPortalEmail()" id="emailBtn" class="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs transition">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
+                            Email PDF
+                        </button>
+                    </div>
+                </div>
+
                 <!-- Payment Action Card -->
                 <div class="mt-6">
                     {checkout_card}
@@ -545,6 +663,30 @@ def create_app(cfg: Optional[Settings] = None) -> FastAPI:
     </main>
 
     <script>
+        async function dispatchPortalEmail() {{
+            const btn = document.getElementById('emailBtn');
+            btn.disabled = true;
+            btn.innerText = 'Sending...';
+            try {{
+                const res = await fetch('/api/invoices/{inv.qbo_invoice_id}/send-email', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify({{}})
+                }});
+                const data = await res.json();
+                if (data.status === 'SUCCESS') {{
+                    alert('Invoice PDF successfully sent to ' + data.dispatch.recipient_email + ' (' + data.dispatch.status + ')');
+                }} else {{
+                    alert('Failed: ' + JSON.stringify(data));
+                }}
+            }} catch (e) {{
+                alert('Error: ' + e);
+            }} finally {{
+                btn.disabled = false;
+                btn.innerText = 'Email PDF';
+            }}
+        }}
+
         async function startCheckout() {{
             const btn = document.getElementById('checkoutBtn');
             btn.disabled = true;
@@ -780,6 +922,8 @@ def create_app(cfg: Optional[Settings] = None) -> FastAPI:
                 </td>
                 <td class="py-3 px-4 text-center space-x-1">
                     <a href="/pay/{inv.qbo_invoice_id}" target="_blank" class="inline-flex items-center px-2 py-1 rounded text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white transition shadow-xs">Pay Portal</a>
+                    <a href="/api/invoices/{inv.qbo_invoice_id}/pdf" target="_blank" class="inline-flex items-center px-2 py-1 rounded text-xs font-semibold bg-rose-600 hover:bg-rose-700 text-white transition shadow-xs">PDF</a>
+                    <button onclick="sendInvoiceEmail('{inv.qbo_invoice_id}')" class="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-emerald-600 hover:bg-emerald-700 text-white transition shadow-xs">Email</button>
                     <a href="/api/invoices/{inv.doc_number}/html" target="_blank" class="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 transition">HTML</a>
                 </td>
             </tr>
@@ -1035,6 +1179,25 @@ def create_app(cfg: Optional[Settings] = None) -> FastAPI:
             }} finally {{
                 btn.disabled = false;
                 btn.innerText = 'Run Dunning Escalation';
+            }}
+        }}
+
+        async function sendInvoiceEmail(invoiceId) {{
+            if (!confirm('Dispatch invoice email with attached vector PDF?')) return;
+            try {{
+                const res = await fetch('/api/invoices/' + invoiceId + '/send-email', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify({{}})
+                }});
+                const data = await res.json();
+                if (data.status === 'SUCCESS') {{
+                    alert('Invoice PDF sent to ' + data.dispatch.recipient_email + ' (' + data.dispatch.status + ')');
+                }} else {{
+                    alert('Error: ' + JSON.stringify(data));
+                }}
+            }} catch (err) {{
+                alert('Failed to send invoice email: ' + err);
             }}
         }}
     </script>

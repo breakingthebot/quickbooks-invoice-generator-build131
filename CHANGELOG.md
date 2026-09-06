@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-09-05
+
+### Added
+- **Vector PDF Generation Engine (`src/qb_invoicing/pdf_generator.py`)**:
+  - High-resolution, audit-compliant vector PDF invoice generator built with ReportLab (`SimpleDocTemplate`, `Table`, `KeepTogether`, `ParagraphStyle`).
+  - Itemized line items table with alternating row striping, rate, quantity, tax code, and line subtotal calculations.
+  - Dynamic invoice metadata, customer billing address details, payment terms, and status badges (`PAID`, `PARTIAL`, `PENDING`, `OVERDUE`, `VOIDED`).
+  - Dedicated financial breakdown box with subtotal, sales tax, shipping fee, total amount, payments applied, and prominent outstanding balance box.
+  - Automatic filesystem saving (`storage/exports/Invoice_{doc_number}.pdf`) and in-memory byte streaming.
+- **Mobile-Scannable Payment QR Codes (`src/qb_invoicing/pdf_generator.py`)**:
+  - Pure-vector QR code generation via `qrcode` and `Pillow`, rendering high-contrast, scannable PNG byte streams.
+  - Embedded directly on every generated PDF invoice alongside scan-to-pay instructions and short URLs.
+  - Mobile cameras instantly route users to the self-service checkout portal (`/pay/{qbo_invoice_id}`) for 1-tap Apple Pay, Google Pay, Card, or ACH payments.
+- **Invoice Email Dispatch Engine (`src/qb_invoicing/mailer.py`)**:
+  - MIME multipart email composer (`text/plain`, `text/html`, and `application/pdf` vector attachment).
+  - SMTP transport with STARTTLS encryption and authentication (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_USE_TLS`).
+  - Zero-dependency Mock Sandbox mode (`MAIL_USE_MOCK=true`) for 100% offline testing without external network traffic.
+  - Automated SQLite audit logging in `email_dispatches` table recording recipient, subject, timestamp, status (`SIMULATED`, `SENT`, `FAILED`), and error details.
+- **REST API Endpoints (`src/qb_invoicing/api.py`)**:
+  - `GET /api/invoices/{identifier}/pdf`: Streaming binary PDF download with `Content-Disposition: inline; filename="Invoice_{doc_number}.pdf"`.
+  - `GET /api/invoices/{identifier}/qr`: Dynamic payment QR code image (`image/png`).
+  - `POST /api/invoices/{identifier}/send-email`: Dispatches invoice email with vector PDF attachment.
+  - `GET /api/invoices/{identifier}/dispatches`: Lists historical email dispatch audit records for the invoice.
+- **UI Enhancements (`/` and `/pay`)**:
+  - Enhanced hosted customer payment portal (`/pay/{identifier}`) with live QR code display, "Download PDF" action, and "Email PDF" dispatch button.
+  - Enhanced interactive web dashboard (`/`) with direct "PDF" download and "Email" dispatch action buttons for each invoice.
+- **CLI Commands (`src/qb_invoicing/cli.py`)**:
+  - `qb-invoicing export-pdf --invoice <id/doc_number> [--output <path>] [--portal-url <url>]`: Generates and exports PDF invoice to disk.
+  - `qb-invoicing send-invoice --invoice <id/doc_number> [--to <email>] [--subject <str>] [--mock/--no-mock]`: Assembles and sends email with attached PDF invoice.
+- **Test Suite (`tests/test_pdf_mailer.py`)**:
+  - 21 new unit and integration tests covering QR code generation, vector PDF rendering across all statuses, order item extraction, mock email transmission, live SMTP error handling, REST endpoints, and CLI commands (80 / 80 tests passing).
+
 ## [1.5.0] - 2026-09-05
 
 ### Added

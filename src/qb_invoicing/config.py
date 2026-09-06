@@ -49,6 +49,15 @@ class Settings(BaseModel):
     stripe_webhook_secret: str = Field(default="whsec_sample_secret_key_8899")
     stripe_use_mock: bool = Field(default=True)
 
+    # Mailer & Dispatch Settings
+    mail_use_mock: bool = Field(default=True)
+    smtp_host: str = Field(default="smtp.example.com")
+    smtp_port: int = Field(default=587)
+    smtp_user: str = Field(default="billing@example.com")
+    smtp_password: str = Field(default="mock_smtp_pass")
+    smtp_use_tls: bool = Field(default=True)
+    mail_from: str = Field(default="billing@example.com")
+
     @property
     def base_url(self) -> str:
         """Returns the appropriate API base URL."""
@@ -98,6 +107,14 @@ class Settings(BaseModel):
         stripe_webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET", "whsec_sample_secret_key_8899")
         stripe_use_mock = os.getenv("STRIPE_USE_MOCK", "true").lower() in ("1", "true", "yes")
 
+        mail_use_mock = os.getenv("MAIL_USE_MOCK", "true").lower() in ("1", "true", "yes")
+        smtp_host = os.getenv("SMTP_HOST", "smtp.example.com")
+        smtp_port = int(os.getenv("SMTP_PORT", "587"))
+        smtp_user = os.getenv("SMTP_USER", "billing@example.com")
+        smtp_password = os.getenv("SMTP_PASSWORD", "mock_smtp_pass")
+        smtp_use_tls = os.getenv("SMTP_USE_TLS", "true").lower() in ("1", "true", "yes")
+        mail_from = os.getenv("MAIL_FROM", company_email)
+
         return cls(
             use_mock=use_mock,
             environment=env,
@@ -119,6 +136,13 @@ class Settings(BaseModel):
             stripe_api_key=stripe_api_key,
             stripe_webhook_secret=stripe_webhook_secret,
             stripe_use_mock=stripe_use_mock,
+            mail_use_mock=mail_use_mock,
+            smtp_host=smtp_host,
+            smtp_port=smtp_port,
+            smtp_user=smtp_user,
+            smtp_password=smtp_password,
+            smtp_use_tls=smtp_use_tls,
+            mail_from=mail_from,
         )
 
 

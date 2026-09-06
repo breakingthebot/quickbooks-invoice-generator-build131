@@ -20,6 +20,7 @@ from rich.table import Table
 from qb_invoicing import __version__
 from qb_invoicing.config import Settings
 from qb_invoicing.ledger import LedgerRepository
+from qb_invoicing.mailer import InvoiceMailer
 from qb_invoicing.models import (
     InvoiceRecord,
     OrderData,
@@ -27,6 +28,7 @@ from qb_invoicing.models import (
     PaymentStatus,
 )
 from qb_invoicing.payment_tracker import PaymentStatusTracker
+from qb_invoicing.pdf_generator import InvoicePDFGenerator
 from qb_invoicing.qbo_client import QuickBooksClient
 from qb_invoicing.renderer import InvoiceRenderer
 from qb_invoicing.transformer import OrderTransformer
@@ -802,6 +804,102 @@ def simulate_stripe_payment_cmd(identifier: str, amount: Optional[float], method
         console.print(table)
     else:
         console.print(f"[bold red][ERROR][/bold red] Settlement failed: {result.message}")
+
+
+@cli.command("export-pdf")
+@click.option("--invoice", "-i", "identifier", required=True, help="Invoice DocNumber, QBO ID, or Order ID")
+@click.option("--output", "-o", "output_path", default=None, help="Custom target PDF destination path")
+@click.option("--portal-url", default=None, help="Payment portal base URL for the QR code")
+def export_pdf_cmd(identifier: str, output_path: Optional[str], portal_url: Optional[str]):
+    """Export an audit-compliant vector PDF invoice with embedded payment QR code."""
+    _, ledger, _, _, cfg = get_components()
+    inv = (
+        ledger.get_invoice_by_id(identifier)
+        or ledger.get_invoice_by_doc_number(identifier)
+        or ledger.get_invoice_by_order_id(identifier)
+    )
+    if not inv:
+        console.print(f"[bold red][ERROR][/bold red] Invoice '{identifier}' not found in local ledger.")
+        return
+
+    order = ledger.get_order(inv.order_id) if inv.order_id else None
+    generator = InvoicePDFGenerator(cfg)
+
+    resolved_url = None
+    if portal_url:
+        p = portal_url.rstrip("/")
+        resolved_url = f"{p}/{inv.qbo_invoice_id}" if "/pay" in p else f"{p}/pay/{inv.qbo_invoice_id}"
+
+    with console.status(f"[bold green]Generating vector PDF for Invoice {inv.doc_number}..."):
+        saved_path = generator.save_pdf(
+            invoice=inv,
+            output_path=output_path,
+            payment_url=resolved_url,
+            order=order,
+        )
+
+    console.print(f"[bold green][OK][/bold green] Vector PDF exported to: [cyan]{saved_path}[/cyan]")
+    table = Table(title=f"Invoice PDF Export: {inv.doc_number}", show_header=False)
+    table.add_column("Property", style="bold")
+    table.add_column("Detail")
+    table.add_row("Document #", inv.doc_number)
+    table.add_row("Customer", f"{inv.customer_name} ({inv.customer_email})")
+    table.add_row("Total Amount", f"${inv.total_amount:.2f} {inv.currency}")
+    table.add_row("Balance Due", f"${inv.balance_due:.2f} {inv.currency}")
+    table.add_row("Status", f"[{inv.payment_status.value}]")
+    table.add_row("File Size", f"{saved_path.stat().st_size:,} bytes")
+    table.add_row("Destination", str(saved_path.resolve()))
+    console.print(table)
+
+
+@cli.command("send-invoice")
+@click.option("--invoice", "-i", "identifier", required=True, help="Invoice DocNumber, QBO ID, or Order ID")
+@click.option("--to", "recipient_email", default=None, help="Recipient email address (defaults to customer email)")
+@click.option("--subject", "-s", default=None, help="Custom email subject")
+@click.option("--mock/--no-mock", default=None, help="Force mock sandbox or live SMTP mode")
+def send_invoice_cmd(identifier: str, recipient_email: Optional[str], subject: Optional[str], mock: Optional[bool]):
+    """Dispatch invoice email with vector PDF attachment via SMTP or sandbox mock."""
+    _, ledger, _, _, cfg = get_components()
+    inv = (
+        ledger.get_invoice_by_id(identifier)
+        or ledger.get_invoice_by_doc_number(identifier)
+        or ledger.get_invoice_by_order_id(identifier)
+    )
+    if not inv:
+        console.print(f"[bold red][ERROR][/bold red] Invoice '{identifier}' not found in local ledger.")
+        return
+
+    if mock is not None:
+        cfg.mail_use_mock = mock
+
+    mailer = InvoiceMailer(settings=cfg, ledger=ledger)
+    target_email = recipient_email or inv.customer_email
+    if not target_email:
+        console.print(f"[bold red][ERROR][/bold red] No recipient email specified and none on file for customer.")
+        return
+
+    with console.status(f"[bold green]Generating PDF and dispatching email to {target_email}..."):
+        try:
+            dispatch = mailer.send_invoice_email(
+                invoice=inv,
+                recipient_email=target_email,
+                subject=subject,
+            )
+        except Exception as exc:
+            console.print(f"[bold red][ERROR][/bold red] Failed to send email: {exc}")
+            return
+
+    console.print(f"[bold green][OK][/bold green] Email successfully dispatched ({dispatch.status})!")
+    table = Table(title=f"Invoice Dispatch Audit: {inv.doc_number}", show_header=False)
+    table.add_column("Field", style="bold")
+    table.add_column("Value")
+    table.add_row("Dispatch ID", str(dispatch.id))
+    table.add_row("Recipient", dispatch.recipient_email)
+    table.add_row("Subject", dispatch.subject)
+    table.add_row("Status", f"[bold green]{dispatch.status}[/bold green]")
+    table.add_row("Attachment", "Invoice PDF (Vector + QR)")
+    table.add_row("Timestamp", dispatch.sent_at.isoformat())
+    console.print(table)
 
 
 if __name__ == "__main__":

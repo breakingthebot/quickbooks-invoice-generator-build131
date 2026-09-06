@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qb-invoicing"
-version = "1.1.0"
+version = "1.6.0"
 description = "QuickBooks Online Invoice Generator & Payment Status Tracker — automated order ingestion, QBO Accounting API v3 mapping, real-time payment reconciliation, SQLite ledger, and CLI suite."
 readme = "README.md"
 license = { text = "MIT" }
@@ -21,6 +21,8 @@ dependencies = [
     "python-dateutil>=2.9.0",
     "fastapi>=0.111.0",
     "uvicorn>=0.30.0",
+    "reportlab>=4.2.0",
+    "qrcode[pil]>=8.0",
 ]
 
 [project.optional-dependencies]
