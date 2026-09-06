@@ -1,7 +1,8 @@
 # QuickBooks Online Invoice Generator & Payment Status Tracker
 
 [![CI](https://github.com/breakingthebot/quickbooks-invoice-generator-build131/actions/workflows/ci.yml/badge.svg)](https://github.com/breakingthebot/quickbooks-invoice-generator-build131/actions/workflows/ci.yml)
-[![Version: 1.3.0](https://img.shields.io/badge/Version-1.3.0-brightgreen.svg)](https://github.com/breakingthebot/quickbooks-invoice-generator-build131)
+[![Version: 1.4.0](https://img.shields.io/badge/Version-1.4.0-brightgreen.svg)](https://github.com/breakingthebot/quickbooks-invoice-generator-build131)
+[![Android](https://img.shields.io/badge/Android-Kotlin%202.0%20%7C%20Compose-3DDC84?logo=android&logoColor=white)](https://developer.android.com/)
 [![Next.js 14](https://img.shields.io/badge/Next.js-14.2%20App%20Router-black?logo=next.js)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?logo=typescript)](https://www.typescriptlang.org/)
 [![Vercel](https://img.shields.io/badge/Deployment-Vercel-black?logo=vercel)](https://vercel.com/)
@@ -11,9 +12,10 @@
 [![Code Style: Black](https://img.shields.io/badge/Code%20Style-Black-000000.svg)](https://github.com/psf/black)
 
 A production-ready QuickBooks Online (QBO) invoice generator, webhook ingestion engine, automated dunning escalation system, real-time payment reconciliation platform, and cross-platform enterprise ecosystem. Transforms multi-channel e-commerce, ERP, or consultation order data into Intuit QuickBooks Online Accounting API v3 invoices, manages customer synchronization, receives and cryptographically verifies QuickBooks Online webhooks via HMAC-SHA256 (`intuit-signature`), categorizes outstanding receivables into aging schedule buckets, enforces dunning escalation ladders with frequency cooldown guards, maintains a local SQLite ledger with relational constraints, tracks payment lifecycles (`PENDING` -> `PARTIAL` -> `PAID`, `OVERDUE`, `VOIDED`), and provides:
-1. **Interactive Next.js 14 Web App**: A production-grade React 18, TypeScript, and Tailwind CSS single-page console built with the App Router, designed for seamless one-click Vercel deployment with dynamic invoice creation, payment recording, and real-time dunning escalation.
-2. **FastAPI REST API**: High-performance async REST backend with CORS support, OpenAPI documentation, and automated webhook routing.
-3. **Terminal CLI Suite (`qb-invoicing`)**: Complete operational CLI for batch processing, ledger inquiries, dunning runs, and webhook simulations.
+1. **Native Android Mobile App (`android/`)**: Built in Kotlin 2.0 with Jetpack Compose & Material 3, providing real-time financial KPIs, AR Aging buckets, dynamic invoice generator wizard with line items repeater, instant payment settlement modal, and configurable backend endpoints.
+2. **Interactive Next.js 14 Web App (`web/`)**: A production-grade React 18, TypeScript, and Tailwind CSS single-page console built with the App Router, designed for seamless one-click Vercel deployment with dynamic invoice creation, payment recording, and real-time dunning escalation.
+3. **FastAPI REST API**: High-performance async REST backend with CORS support, OpenAPI documentation, and automated webhook routing.
+4. **Terminal CLI Suite (`qb-invoicing`)**: Complete operational CLI for batch processing, ledger inquiries, dunning runs, and webhook simulations.
 
 ---
 
@@ -268,6 +270,47 @@ vercel
 
 ---
 
+## Native Android Application (Kotlin & Jetpack Compose)
+
+The `android/` directory contains a complete native Android application built with **Kotlin 2.0**, **Jetpack Compose (Material 3)**, **Retrofit 2**, **Coroutines & StateFlow**, and **ViewModel** architecture.
+
+### Key Mobile Features
+- **Executive Mobile Dashboard**:
+  - Live metric KPI cards (Total Invoiced, Collected, Outstanding, Overdue).
+  - Horizontal scrolling Accounts Receivable Aging Schedule card rail (Current, 1–30d, 31–60d, 61–90d, 90+d).
+  - One-touch "Run Dunning Escalation" button with reactive progress indicator.
+  - Active server connection indicator.
+- **Invoice Ledger & Settlement**:
+  - Status filter chips (`ALL`, `PENDING`, `PARTIAL`, `PAID`, `OVERDUE`, `VOIDED`) and instant text search.
+  - One-click `RecordPaymentDialog` supporting Credit Card, Bank Transfer, Check, and Cash.
+- **Mobile Invoice Generator**:
+  - Dynamic line items repeater (add/remove rows, description, unit price, quantity).
+  - Configurable Net terms (15, 30, 60 days).
+  - Live subtotal, tax %, and shipping calculation.
+- **Activity & Webhooks Log**:
+  - Tabbed split feeds for dispatched dunning notices and QuickBooks Online webhooks.
+- **Configurable Backend Endpoint**:
+  - Built-in URL switcher (`Settings` icon) allowing instant connection to Android Emulator (`http://10.0.2.2:8000/`), local WiFi network (`http://192.168.x.x:8000/`), or public tunnels (e.g. ngrok).
+
+### Running the Android App
+
+1. Ensure the Python backend is running:
+   ```bash
+   qb-invoicing serve --host 0.0.0.0 --port 8000
+   ```
+2. Open the `android/` directory in **Android Studio** (Koala / Ladybug or newer).
+3. Allow Gradle to sync.
+4. Select an Android Emulator or physical device (Android 7.0+ / API 24+).
+5. Click **Run** to launch on device.
+
+### Running Android Unit Tests
+```bash
+cd android
+.\gradlew.bat testDebugUnitTest
+```
+
+---
+
 ## Terminal Visual Preview
 
 ### Invoice Generation & Rich Output
@@ -391,7 +434,7 @@ The package provides the `qb-invoicing` executable CLI tool:
 ### 1. Check Version
 ```bash
 qb-invoicing --version
-# Outputs: qb-invoicing v1.3.0
+# Outputs: qb-invoicing v1.4.0
 ```
 
 ### 2. Initialize Database

@@ -42,3 +42,14 @@ storage/*.json
 storage/.*_state.json
 storage/invoices_export/
 storage/exports/
+
+# Android & Gradle
+.gradle/
+local.properties
+android/**/build/
+android/.gradle/
+*.apk
+*.aab
+.kotlin/
+captures/
+

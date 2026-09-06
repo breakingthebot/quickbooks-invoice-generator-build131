@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-09-05
+
+### Added
+- **Native Android Application (`android/`)**:
+  - Production-grade mobile client built with Kotlin 2.0.21, Jetpack Compose, Material 3, and Retrofit 2.
+  - Live Executive Dashboard featuring Financial KPI cards (Invoiced, Collected, Outstanding, Overdue) and horizontal AR Aging Schedule card scroll.
+  - Invoice Ledger screen with real-time status filtering chips (`ALL`, `PENDING`, `PARTIAL`, `PAID`, `OVERDUE`, `VOIDED`) and search bar.
+  - One-click `RecordPaymentDialog` supporting multiple payment methods (`CreditCard`, `BankTransfer`, `Check`, `Cash`) with reference tracking.
+  - Interactive `CreateInvoiceScreen` wizard with customer information, Net terms, dynamic line items repeater, tax rate %, shipping fees, and live total math.
+  - Activity screen displaying tabbed audit feeds for dispatched dunning notices and QuickBooks Online webhooks.
+  - Configurable in-app backend base URL switcher (`ServerSettingsDialog`) supporting Android Emulator (`http://10.0.2.2:8000/`), local WiFi IPs, and ngrok/Cloudflare tunnels.
+  - Network security configuration allowing cleartext traffic for local development.
+  - Standalone Gradle build with wrapper (`gradle-8.11.1-bin.zip`), JDK 17 support, and complete unit tests (`QbModelsTest`).
+- **Documentation**:
+  - Created `android/README.md` with Android Studio instructions, build commands, and network setup.
+  - Created `docs/summaries/iteration_05_summary.md`.
+
 ## [1.3.0] - 2026-09-05
 
 ### Added

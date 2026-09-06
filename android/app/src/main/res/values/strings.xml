@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">QuickBooks Invoicing</string>
+    <string name="title_dashboard">Dashboard</string>
+    <string name="title_invoices">Invoices</string>
+    <string name="title_new_invoice">New Invoice</string>
+    <string name="title_activity">Activity</string>
+</resources>
