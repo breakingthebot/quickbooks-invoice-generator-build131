@@ -9,6 +9,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request, Response, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -53,6 +54,15 @@ def create_app(cfg: Optional[Settings] = None) -> FastAPI:
         title="QuickBooks Online Invoice Generator API",
         version=__version__,
         description="REST API and Webhook Engine for QuickBooks Online Invoicing and Payment Tracking",
+    )
+
+    # Enable CORS for Vercel, localhost, and mobile clients
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
     client = QuickBooksClient(app_config)

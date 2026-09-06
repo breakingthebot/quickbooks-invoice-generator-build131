@@ -14,14 +14,34 @@ This document logs every incremental engineering iteration and git commit pushed
 | :---: | :---: | :---: | :--- | :---: | :--- |
 | **01** | [`76dd4f4`](https://github.com/breakingthebot/quickbooks-invoice-generator-build131/commit/76dd4f4) | `v1.0.0` | **Core QuickBooks Online Invoice Generator, Order Ingestion, Payment Status Tracker, Persistent Ledger & CLI**<br>Order data ingestion and validation, QBO Accounting API v3 mapping, native offline sandbox engine, SQLite persistent ledger, payment status lifecycle tracking, Rich CLI suite (`qb-invoicing`), and multi-platform CI workflow. | 21 / 21 | [Iteration 01 Summary](docs/summaries/iteration_01_summary.md) |
 | **02** | [`e34f8c0`](https://github.com/breakingthebot/quickbooks-invoice-generator-build131/commit/e34f8c0) | `v1.1.0` | **QuickBooks Webhook Ingestion, Cryptographic Signature Verification, Automated Reconciliation & Real-Time Web Dashboard**<br>Intuit HMAC-SHA256 signature verification, webhook event deduplication, real-time payment reconciliation on `Payment.Create/Update`, invoice voiding, FastAPI REST API, and interactive Tailwind CSS web dashboard. | 33 / 33 | [Iteration 02 Summary](docs/summaries/iteration_02_summary.md) |
-| **03** | [`0065aa2`](https://github.com/breakingthebot/quickbooks-invoice-generator-build131/commit/0065aa2) | `v1.2.0` | **Automated Dunning Escalation & Accounts Receivable Aging Engine**<br>Automated overdue payment escalation ladder (Net 15, Net 30, Net 60, Net 90+ buckets), customizable HTML & plain-text dunning templates, frequency cooldown spam suppression, SQLite dunning audit ledger, REST API endpoints, aging schedule web dashboard integration, and CLI commands (`aging-report`, `dunning-run`, `dunning-history`). | 43 / 43 | [Iteration 03 Summary](docs/summaries/iteration_03_summary.md) |
+| **03** | [`7307b17`](https://github.com/breakingthebot/quickbooks-invoice-generator-build131/commit/7307b17) | `v1.2.0` | **Automated Dunning Escalation & Accounts Receivable Aging Engine**<br>Automated overdue payment escalation ladder (Net 15, Net 30, Net 60, Net 90+ buckets), customizable HTML & plain-text dunning templates, frequency cooldown spam suppression, SQLite dunning audit ledger, REST API endpoints, aging schedule web dashboard integration, and CLI commands (`aging-report`, `dunning-run`, `dunning-history`). | 43 / 43 | [Iteration 03 Summary](docs/summaries/iteration_03_summary.md) |
+| **04** | [`9d546ab`](https://github.com/breakingthebot/quickbooks-invoice-generator-build131/commit/9d546ab) | `v1.3.0` | **Vercel-Ready Next.js 14 Web Application**<br>Full-featured Next.js 14 (App Router) + React 18 + TypeScript + Tailwind CSS web portal in `web/` configured for 1-click Vercel deployment (`vercel.json`), interactive Invoice Creation wizard modal, one-click Payment Settlement modal, Accounts Receivable Aging schedule visual cards, automated Dunning Escalation trigger, live audit feeds, and backend FastAPI CORS middleware. | 43 / 43 + Next.js build | [Iteration 04 Summary](docs/summaries/iteration_04_summary.md) |
 
 ---
 
 ## Chronological Iteration Entries
 
+### Iteration 4: Vercel-Ready Next.js 14 Web Application
+- **Git Commit**: [`9d546ab`](https://github.com/breakingthebot/quickbooks-invoice-generator-build131/commit/9d546ab)
+- **Tag / Version**: `v1.3.0`
+- **Date**: 2026-09-05
+- **Plain English Summary**:
+  Delivered a modern, production-grade Next.js 14 web application in the `web/` directory, configured for zero-configuration 1-click Vercel cloud deployment. Features a responsive Tailwind CSS dashboard with interactive KPI scorecards, Accounts Receivable Aging Schedule card grid, an interactive "Create Invoice" modal with real-time tax/shipping/discount math, a "Record Payment" settlement modal, a one-click Dunning Escalation runner, and live split feeds for sent dunning notices and cryptographic QuickBooks webhooks. Enabled CORS middleware on FastAPI to seamlessly support external web and mobile clients.
+- **Key Files Introduced / Modified**:
+  - `vercel.json`: Root Vercel deployment configuration.
+  - `web/package.json`, `web/tsconfig.json`, `web/next.config.mjs`, `web/tailwind.config.ts`: Next.js 14 environment.
+  - `web/app/page.tsx`: Single-page interactive dashboard, creation modal, and payment modal.
+  - `web/lib/api.ts`: Typed fetch API client and domain interfaces.
+  - `web/app/layout.tsx` & `web/app/globals.css`: Layout navigation and styling.
+  - `web/README.md`: Next.js development and Vercel cloud deployment documentation.
+  - `src/qb_invoicing/api.py`: Configured `CORSMiddleware` on FastAPI service.
+  - `docs/summaries/iteration_04_summary.md`: Iteration 4 technical summary archive.
+- **Test Results**: 43 Pytest unit & integration tests passing; `npm run build` compiled cleanly.
+
+---
+
 ### Iteration 3: Automated Dunning Escalation & Accounts Receivable Aging Engine
-- **Git Commit**: [`0065aa2`](https://github.com/breakingthebot/quickbooks-invoice-generator-build131/commit/0065aa2)
+- **Git Commit**: [`7307b17`](https://github.com/breakingthebot/quickbooks-invoice-generator-build131/commit/7307b17)
 - **Tag / Version**: `v1.2.0`
 - **Date**: 2026-09-05
 - **Plain English Summary**:

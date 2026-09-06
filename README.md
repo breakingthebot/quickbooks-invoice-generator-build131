@@ -1,12 +1,19 @@
 # QuickBooks Online Invoice Generator & Payment Status Tracker
 
 [![CI](https://github.com/breakingthebot/quickbooks-invoice-generator-build131/actions/workflows/ci.yml/badge.svg)](https://github.com/breakingthebot/quickbooks-invoice-generator-build131/actions/workflows/ci.yml)
+[![Version: 1.3.0](https://img.shields.io/badge/Version-1.3.0-brightgreen.svg)](https://github.com/breakingthebot/quickbooks-invoice-generator-build131)
+[![Next.js 14](https://img.shields.io/badge/Next.js-14.2%20App%20Router-black?logo=next.js)](https://nextjs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?logo=typescript)](https://www.typescriptlang.org/)
+[![Vercel](https://img.shields.io/badge/Deployment-Vercel-black?logo=vercel)](https://vercel.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](https://www.python.org/)
 [![Intuit QBO v3](https://img.shields.io/badge/QuickBooks-Accounting%20API%20v3-green.svg)](https://developer.intuit.com/)
 [![Code Style: Black](https://img.shields.io/badge/Code%20Style-Black-000000.svg)](https://github.com/psf/black)
 
-A production-ready QuickBooks Online (QBO) invoice generator, webhook ingestion engine, automated dunning escalation system, and real-time payment reconciliation platform. Transforms multi-channel e-commerce, ERP, or consultation order data into Intuit QuickBooks Online Accounting API v3 invoices, manages customer synchronization, receives and cryptographically verifies QuickBooks Online webhooks via HMAC-SHA256 (`intuit-signature`), categorizes outstanding receivables into aging schedule buckets, enforces dunning escalation ladders with frequency cooldown guards, maintains a local SQLite ledger with relational constraints, tracks payment lifecycles (`PENDING` -> `PARTIAL` -> `PAID`, `OVERDUE`, `VOIDED`), and provides both an interactive terminal CLI suite (`qb-invoicing`) and a modern FastAPI REST API with a responsive web dashboard.
+A production-ready QuickBooks Online (QBO) invoice generator, webhook ingestion engine, automated dunning escalation system, real-time payment reconciliation platform, and cross-platform enterprise ecosystem. Transforms multi-channel e-commerce, ERP, or consultation order data into Intuit QuickBooks Online Accounting API v3 invoices, manages customer synchronization, receives and cryptographically verifies QuickBooks Online webhooks via HMAC-SHA256 (`intuit-signature`), categorizes outstanding receivables into aging schedule buckets, enforces dunning escalation ladders with frequency cooldown guards, maintains a local SQLite ledger with relational constraints, tracks payment lifecycles (`PENDING` -> `PARTIAL` -> `PAID`, `OVERDUE`, `VOIDED`), and provides:
+1. **Interactive Next.js 14 Web App**: A production-grade React 18, TypeScript, and Tailwind CSS single-page console built with the App Router, designed for seamless one-click Vercel deployment with dynamic invoice creation, payment recording, and real-time dunning escalation.
+2. **FastAPI REST API**: High-performance async REST backend with CORS support, OpenAPI documentation, and automated webhook routing.
+3. **Terminal CLI Suite (`qb-invoicing`)**: Complete operational CLI for batch processing, ledger inquiries, dunning runs, and webhook simulations.
 
 ---
 
@@ -31,7 +38,9 @@ flowchart TD
     F --> DE[Automated Dunning Engine<br>Aging Buckets: Current, 1-30d, 31-60d, 61-90d, 90+d]
     DE -->|Cooldown Evaluation & Notice Dispatch| DH[(dunning_history)]
 
-    F --> Y[FastAPI REST API & Web Dashboard<br>Live Metrics, Aging Cards, Webhook Feed]
+    F --> Y[FastAPI REST API<br>CORS-enabled REST Endpoints & Webhook Ingestion]
+    Y <-->|REST API / Rewrites| WEB[Next.js 14 Web Application<br>Vercel-Ready App Router + Tailwind]
+    Y <-->|REST API / Retrofit| ANDROID[Native Android App<br>Kotlin + Jetpack Compose]
     F --> I[Terminal CLI Suite<br>qb-invoicing commands & HTML renderer]
 ```
 
@@ -194,6 +203,71 @@ Navigate to `http://127.0.0.1:8000/` for the real-time responsive dashboard feat
 
 ---
 
+## Modern Web Application (Next.js 14 + Vercel)
+
+The `web/` directory houses a complete, modern web frontend built with **Next.js 14 (App Router)**, **React 18**, **TypeScript**, and **Tailwind CSS**. It communicates seamlessly with the FastAPI backend and is architected for immediate **Vercel** cloud deployment.
+
+### Key Web Features
+- **Real-Time Financial Dashboard**:
+  - Live metric KPI cards: Total Invoiced, Outstanding Receivables, Collected Revenue, and Overdue Balances.
+  - Accounts Receivable Aging Schedule buckets: Current, 1-30 Days, 31-60 Days, 61-90 Days, 90+ Days with visual color coding.
+- **Interactive "Create Invoice" Modal**:
+  - Customer info fields (name, email, order ID, payment terms).
+  - Dynamic line items repeater (add/remove item rows with name, quantity, unit price).
+  - Configurable sales tax rate and shipping fee with real-time running subtotal and total balance calculation.
+- **Payment Settlement Modal**:
+  - One-click modal to record full or partial payments with method selection (`CreditCard`, `BankTransfer`, `Check`, `Cash`) and reference tracking.
+- **Automated Dunning Trigger**:
+  - "Run Dunning Escalation" button with confirmation alert, executing overdue evaluation and dispatching notices across all open receivables.
+- **Invoice Ledger Table**:
+  - Dynamic status pills (`PENDING`, `PARTIAL`, `PAID`, `OVERDUE`, `VOIDED`).
+  - Quick action buttons to record payment or open printable standalone HTML invoices in a new tab.
+- **Live Split Audit Feeds**:
+  - Real-time side-by-side feed of recent dunning notices dispatched and cryptographic QuickBooks webhook events ingested.
+
+### Running the Web App Locally
+
+Ensure your FastAPI backend is running first:
+```bash
+qb-invoicing serve --host 127.0.0.1 --port 8000
+```
+
+Then start the Next.js development server:
+```bash
+cd web
+npm install
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) in your browser. All `/api/*` calls are automatically proxied via `next.config.mjs` to `http://127.0.0.1:8000`.
+
+### Deploying to Vercel
+
+The project includes a root-level `vercel.json` configured specifically for Vercel:
+```json
+{
+  "framework": "nextjs",
+  "rootDirectory": "web",
+  "buildCommand": "npm run build"
+}
+```
+
+#### Option A: One-Click GitHub Import
+1. Push your changes to GitHub.
+2. Go to [vercel.com/new](https://vercel.com/new) and import the `quickbooks-invoice-generator-build131` repository.
+3. Vercel automatically detects `vercel.json` and sets the root directory to `web`.
+4. In **Environment Variables**, add:
+   - `NEXT_PUBLIC_API_URL`: Your deployed FastAPI backend URL (or public tunneling URL).
+5. Click **Deploy**.
+
+#### Option B: Deploy via Vercel CLI
+```bash
+npm i -g vercel
+vercel
+```
+
+---
+
 ## Terminal Visual Preview
 
 ### Invoice Generation & Rich Output
@@ -317,7 +391,7 @@ The package provides the `qb-invoicing` executable CLI tool:
 ### 1. Check Version
 ```bash
 qb-invoicing --version
-# Outputs: qb-invoicing v1.2.0
+# Outputs: qb-invoicing v1.3.0
 ```
 
 ### 2. Initialize Database

@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-09-05
+
+### Added
+- **Vercel-Ready Next.js 14 Web Application (`web/`)**:
+  - Full-featured web application built with Next.js 14 (App Router), React 18, TypeScript 5.6, and Tailwind CSS.
+  - Vercel cloud deployment configuration (`vercel.json`) supporting 1-click deployments.
+  - Interactive Invoice Creation Modal wizard with dynamic line items, taxes, discounts, and real-time total computation.
+  - One-click Payment Settlement Modal with balance updates.
+  - Accounts Receivable Aging Schedule card grid with live bucket totals.
+  - Automated Dunning Escalation trigger button with immediate visual feedback.
+  - Real-time audit feeds for dunning notices and cryptographic HMAC-SHA256 webhook deliveries.
+- **Backend CORS Middleware (`src/qb_invoicing/api.py`)**:
+  - Configured `CORSMiddleware` on FastAPI to support cross-origin API calls from Vercel (`*.vercel.app`), local development servers (`http://localhost:3000`), and mobile clients.
+- **Documentation & Guides**:
+  - Created `web/README.md` with local development commands and Vercel deployment workflows.
+  - Created `docs/summaries/iteration_04_summary.md`.
+
 ## [1.2.0] - 2026-09-05
 
 ### Added

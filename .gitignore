@@ -21,6 +21,9 @@ build/
 
 # Node / JS
 node_modules/
+.next/
+out/
+.vercel/
 
 # OS and logs
 .DS_Store
